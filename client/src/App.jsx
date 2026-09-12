@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
 import Sidebar from "./components/Sidebar.jsx";
-import MarketTable from "./components/MarketTable.jsx";
+import MarketGrid from "./components/MarketGrid.jsx";
 import MarketDetail from "./components/MarketDetail.jsx";
 import SettingsModal from "./components/SettingsModal.jsx";
+import { useMarketGroups } from "./hooks/useMarketGroups.js";
 
 export default function App() {
   const [stats, setStats] = useState({ count: 0, lastUpdated: null });
-  const [markets, setMarkets] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
 
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
@@ -21,8 +19,30 @@ export default function App() {
   const [tags, setTags] = useState([]);
 
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(50);
-  const [totalMarkets, setTotalMarkets] = useState(0);
+  const [pageSize, setPageSize] = useState(25);
+  const [refreshIntervalSec, setRefreshIntervalSec] = useState(30);
+
+  const {
+    groups,
+    total: totalMarkets,
+    loading,
+    error,
+    lastFetchedAt,
+    refetch: refetchGrid,
+  } = useMarketGroups(
+    {
+      search,
+      status,
+      sortBy,
+      minVolume: minVolume || undefined,
+      minPrice: minPrice === "" ? undefined : minPrice,
+      maxPrice: maxPrice === "" ? undefined : maxPrice,
+      tag: tag || undefined,
+      page,
+      pageSize,
+    },
+    refreshIntervalSec
+  );
 
   const [selectedSlug, setSelectedSlug] = useState(null);
   const [selectedMarket, setSelectedMarket] = useState(null);
@@ -58,51 +78,21 @@ export default function App() {
     }
   };
 
-  const refreshMarkets = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await api.markets({
-        search,
-        status,
-        sortBy,
-        minVolume: minVolume || undefined,
-        minPrice: minPrice === "" ? undefined : minPrice,
-        maxPrice: maxPrice === "" ? undefined : maxPrice,
-        tag: tag || undefined,
-        page,
-        pageSize,
-      });
-      setMarkets(result.rows);
-      setTotalMarkets(result.total);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   // Initial load
   useEffect(() => {
     refreshStats();
     refreshTags();
-    refreshMarkets();
     refreshDeepseekStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Any filter (or page size) change jumps back to page 1
+  // Any filter (or page size) change jumps back to page 1 — useMarketGroups
+  // re-fetches on its own whenever any of these (or page) change.
   useEffect(() => {
     setPage(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, status, sortBy, minVolume, minPrice, maxPrice, tag, pageSize]);
-
-  // Re-query whenever a filter or the page changes
-  useEffect(() => {
-    refreshMarkets();
     setSelectedSlugs(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, status, sortBy, minVolume, minPrice, maxPrice, tag, page, pageSize]);
+  }, [search, status, sortBy, minVolume, minPrice, maxPrice, tag, pageSize]);
 
   useEffect(() => () => {
     cancelRef.current = true;
@@ -140,9 +130,10 @@ export default function App() {
   };
 
   const toggleSelectAllMarkets = () => {
+    const allMarkets = groups.flatMap((g) => g.markets);
     setSelectedSlugs((prev) => {
-      const allSelected = markets.length > 0 && markets.every((m) => prev.has(m.slug));
-      return allSelected ? new Set() : new Set(markets.map((m) => m.slug));
+      const allSelected = allMarkets.length > 0 && allMarkets.every((m) => prev.has(m.slug));
+      return allSelected ? new Set() : new Set(allMarkets.map((m) => m.slug));
     });
   };
 
@@ -155,7 +146,7 @@ export default function App() {
     try {
       const result = await api.refreshMarkets([...selectedSlugs]);
       setSelectedSlugs(new Set());
-      await Promise.all([refreshMarkets(), refreshStats()]);
+      await Promise.all([refetchGrid(), refreshStats()]);
       if (result.failed?.length) {
         setRefreshError(
           `Couldn't update ${result.failed.length} market(s): ${result.failed
@@ -214,7 +205,7 @@ export default function App() {
       setSyncStatus({ running: false, total, limit, error: null });
       refreshStats();
       refreshTags();
-      refreshMarkets();
+      refetchGrid();
     } catch (err) {
       setSyncStatus({ running: false, total, limit, error: err.message });
     }
@@ -245,12 +236,6 @@ export default function App() {
             <option value="">All statuses</option>
             <option value="active">Active</option>
             <option value="closed">Closed</option>
-          </select>
-          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-            <option value="volume">Sort: Volume</option>
-            <option value="liquidity">Sort: Liquidity</option>
-            <option value="current_price">Sort: Price</option>
-            <option value="resolution_date">Sort: Resolution date</option>
           </select>
           <input
             type="number"
@@ -286,21 +271,15 @@ export default function App() {
           />
         </div>
 
-        {error && <p className="sync-error">{error}</p>}
         {refreshError && <p className="sync-error">{refreshError}</p>}
 
-        {!loading && totalMarkets === 0 ? (
+        {!loading && totalMarkets === 0 && groups.length === 0 && !search && !status && !tag ? (
           <div className="empty-state">
             No markets stored yet. Use <strong>Run sync</strong> in the sidebar to fetch from Polymarket.
           </div>
         ) : (
           <>
             <div className="toolbar">
-              <p className="result-count">
-                {totalMarkets === 0
-                  ? "0 markets"
-                  : `Showing ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, totalMarkets)} of ${totalMarkets} markets`}
-              </p>
               <div className="bulk-actions">
                 <span className="selected-count">{selectedSlugs.size} selected</span>
                 <button
@@ -312,39 +291,26 @@ export default function App() {
                 </button>
               </div>
             </div>
-            <MarketTable
-              markets={markets}
+            <MarketGrid
+              groups={groups}
+              total={totalMarkets}
+              page={page}
+              pageSize={pageSize}
+              onPageChange={setPage}
+              onPageSizeChange={setPageSize}
+              sortBy={sortBy}
+              onSortByChange={setSortBy}
+              loading={loading}
+              error={error}
+              lastFetchedAt={lastFetchedAt}
+              refreshIntervalSec={refreshIntervalSec}
+              onRefreshIntervalChange={setRefreshIntervalSec}
               selectedSlug={selectedSlug}
-              onSelect={setSelectedSlug}
+              onSelectMarket={setSelectedSlug}
               selectedSlugs={selectedSlugs}
               onToggleSelect={toggleSelectMarket}
               onToggleSelectAll={toggleSelectAllMarkets}
             />
-            <div className="pagination">
-              <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>
-                <option value={25}>25 / page</option>
-                <option value={50}>50 / page</option>
-                <option value={100}>100 / page</option>
-                <option value={200}>200 / page</option>
-              </select>
-              <button
-                className="btn btn-ghost btn-small"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-              >
-                ← Prev
-              </button>
-              <span className="page-indicator">
-                Page {page} of {Math.max(1, Math.ceil(totalMarkets / pageSize))}
-              </span>
-              <button
-                className="btn btn-ghost btn-small"
-                disabled={page >= Math.ceil(totalMarkets / pageSize)}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Next →
-              </button>
-            </div>
           </>
         )}
 

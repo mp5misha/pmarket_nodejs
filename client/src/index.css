@@ -364,6 +364,99 @@ table.ledger tbody tr.selected {
   background: rgba(184, 134, 46, 0.15);
 }
 
+/* ---------------------------------------------------------------- */
+/* Market grid (Phase 1)                                             */
+/* ---------------------------------------------------------------- */
+
+.market-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.grid-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.grid-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.grid-inline-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.grid-inline-label select {
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12.5px;
+  font-family: var(--font-sans);
+  color: var(--ink);
+}
+
+.grid-last-updated {
+  font-size: 12px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.event-header-row td {
+  background: var(--paper);
+  border-bottom: 1px solid var(--rule);
+}
+
+.event-header-cell {
+  font-weight: 600;
+  font-size: 12.5px;
+  color: var(--ink);
+  padding-top: 12px !important;
+}
+
+.event-count {
+  font-weight: 400;
+  color: var(--ink-soft);
+}
+
+table.ledger tbody tr.nested-row td.q-cell {
+  padding-left: 26px;
+}
+
+table.ledger tbody tr.highlighted-row {
+  background: rgba(60, 122, 94, 0.09);
+}
+
+table.ledger tbody tr.highlighted-row:hover {
+  background: rgba(60, 122, 94, 0.15);
+}
+
+.resolved-badge {
+  display: inline-block;
+  background: rgba(91, 100, 114, 0.14);
+  color: var(--ink-soft);
+  border-radius: 3px;
+  padding: 2px 7px;
+  font-size: 11px;
+}
+
+.updated-cell {
+  font-size: 12px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
 .num {
   font-variant-numeric: tabular-nums;
   text-align: right;

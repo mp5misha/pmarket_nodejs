@@ -1,72 +1,21 @@
 import Database from "better-sqlite3";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { runMigrations } from "./migrate.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_DB_PATH = path.join(__dirname, "..", "polymarket.db");
 
-const CREATE_MARKETS_TABLE = `
-CREATE TABLE IF NOT EXISTS markets (
-  slug            TEXT PRIMARY KEY,
-  market_id       TEXT,
-  condition_id    TEXT,
-  question        TEXT,
-  outcomes        TEXT,
-  outcome_prices  TEXT,
-  current_price   REAL,
-  no_price        REAL,
-  min_price       REAL,
-  max_price       REAL,
-  volume          REAL,
-  liquidity       REAL,
-  resolution_date TEXT,
-  active          INTEGER,
-  closed          INTEGER,
-  yes_token_id    TEXT,
-  tags            TEXT,
-  event_id        TEXT,
-  event_slug      TEXT,
-  event_title     TEXT,
-  last_updated    TEXT
-);
-`;
-
-// Indexes (idx_markets_event references a column that's only guaranteed to
-// exist once the ALTER TABLEs in getDb() below have run) and the settings
-// table — created after those migrations, not before.
-const CREATE_INDEXES_AND_SETTINGS = `
-CREATE INDEX IF NOT EXISTS idx_markets_volume ON markets(volume);
-CREATE INDEX IF NOT EXISTS idx_markets_resolution ON markets(resolution_date);
-CREATE INDEX IF NOT EXISTS idx_markets_event ON markets(event_id);
-CREATE TABLE IF NOT EXISTS settings (
-  key   TEXT PRIMARY KEY,
-  value TEXT
-);
-`;
-
 let dbInstance = null;
 let dbInstancePath = null;
 
-/** Returns a cached connection for dbPath, opening + migrating it on first use. */
+/** Returns a cached connection for dbPath, running any pending migrations
+ * (see server/migrations/) on first use. */
 export function getDb(dbPath = DEFAULT_DB_PATH) {
   if (dbInstance && dbInstancePath === dbPath) return dbInstance;
   if (dbInstance) dbInstance.close();
   dbInstance = new Database(dbPath);
-  dbInstance.exec(CREATE_MARKETS_TABLE);
-  // Columns added after the initial schema — CREATE TABLE IF NOT EXISTS won't
-  // retrofit them onto a database file created before each change. These
-  // must run before CREATE_INDEXES_AND_SETTINGS, since idx_markets_event
-  // indexes a column that may not exist yet on an older database file.
-  const columns = dbInstance.prepare("PRAGMA table_info(markets)").all().map((c) => c.name);
-  const addColumnIfMissing = (name, ddl) => {
-    if (!columns.includes(name)) dbInstance.exec(`ALTER TABLE markets ADD COLUMN ${ddl}`);
-  };
-  addColumnIfMissing("tags", "tags TEXT");
-  addColumnIfMissing("no_price", "no_price REAL");
-  addColumnIfMissing("event_id", "event_id TEXT");
-  addColumnIfMissing("event_slug", "event_slug TEXT");
-  addColumnIfMissing("event_title", "event_title TEXT");
-  dbInstance.exec(CREATE_INDEXES_AND_SETTINGS);
+  runMigrations(dbInstance);
   dbInstancePath = dbPath;
   return dbInstance;
 }
@@ -130,24 +79,11 @@ export function upsertMarket(db, market, { minPrice = null, maxPrice = null } = 
   });
 }
 
-const SORTABLE = new Set(["volume", "liquidity", "current_price", "resolution_date"]);
+const SORTABLE = new Set(["volume", "liquidity", "current_price", "resolution_date", "closed"]);
 
-/** Returns { rows, total, page, pageSize } — `total` is the count matching
- * the filters across all pages, for the grid's pagination controls. */
-export function queryMarkets(
-  db,
-  {
-    search,
-    status,
-    sortBy = "volume",
-    minVolume = 0,
-    minPrice,
-    maxPrice,
-    tag,
-    page = 1,
-    pageSize = 50,
-  } = {}
-) {
+/** Shared WHERE-clause builder for queryMarkets/queryMarketsGrouped — keeps
+ * the two filter sets from drifting apart. */
+function buildMarketFilters({ search, status, minVolume, minPrice, maxPrice, tag }) {
   const clauses = [];
   const params = {};
   if (search) {
@@ -172,6 +108,26 @@ export function queryMarkets(
     clauses.push("tags LIKE @tag");
     params.tag = `%"${tag}"%`;
   }
+  return { clauses, params };
+}
+
+/** Returns { rows, total, page, pageSize } — `total` is the count matching
+ * the filters across all pages, for the grid's pagination controls. */
+export function queryMarkets(
+  db,
+  {
+    search,
+    status,
+    sortBy = "volume",
+    minVolume = 0,
+    minPrice,
+    maxPrice,
+    tag,
+    page = 1,
+    pageSize = 50,
+  } = {}
+) {
+  const { clauses, params } = buildMarketFilters({ search, status, minVolume, minPrice, maxPrice, tag });
   const sortCol = SORTABLE.has(sortBy) ? sortBy : "volume";
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
 
@@ -184,6 +140,52 @@ export function queryMarkets(
   const rows = db.prepare(sql).all({ ...params, pageSize: pageSizeSafe, offset });
 
   return { rows, total, page: pageSafe, pageSize: pageSizeSafe };
+}
+
+/** Same filters as queryMarkets, but groups the matching markets by their
+ * Polymarket event (a standalone market with no event is its own
+ * single-market group) and paginates over GROUPS rather than raw rows —
+ * powers the Phase 1 grid's "event row containing its markets" layout.
+ * Grouping happens in JS after fetching all matching rows: simplest correct
+ * option at this app's scale (a personal tracker, not a high-volume system),
+ * and it keeps a group's sort position tied to its best-ranked market. */
+export function queryMarketsGrouped(
+  db,
+  { search, status, sortBy = "volume", minVolume = 0, minPrice, maxPrice, tag, page = 1, pageSize = 25 } = {}
+) {
+  const { clauses, params } = buildMarketFilters({ search, status, minVolume, minPrice, maxPrice, tag });
+  const sortCol = SORTABLE.has(sortBy) ? sortBy : "volume";
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  const rows = db
+    .prepare(`SELECT * FROM markets ${where} ORDER BY ${sortCol} DESC NULLS LAST`)
+    .all(params);
+
+  const groupOrder = [];
+  const groupsByKey = new Map();
+  for (const row of rows) {
+    const key = row.event_id || `standalone:${row.slug}`;
+    let group = groupsByKey.get(key);
+    if (!group) {
+      group = {
+        key,
+        eventId: row.event_id,
+        eventSlug: row.event_slug,
+        eventTitle: row.event_title || row.question,
+        markets: [],
+      };
+      groupsByKey.set(key, group);
+      groupOrder.push(group);
+    }
+    group.markets.push(row);
+  }
+
+  const total = groupOrder.length;
+  const pageSizeSafe = Math.max(1, Math.min(200, pageSize));
+  const pageSafe = Math.max(1, page);
+  const offset = (pageSafe - 1) * pageSizeSafe;
+  const groups = groupOrder.slice(offset, offset + pageSizeSafe);
+
+  return { groups, total, page: pageSafe, pageSize: pageSizeSafe };
 }
 
 /** Sibling markets under the same Polymarket event (e.g. other candidates in

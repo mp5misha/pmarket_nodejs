@@ -22,6 +22,14 @@ export const api = {
     return fetch(`${BASE}/markets${qs ? `?${qs}` : ""}`).then(handle);
   },
   market: (slug) => fetch(`${BASE}/markets/${encodeURIComponent(slug)}`).then(handle),
+  // Same filters as markets(), but grouped by Polymarket event and paginated
+  // over groups instead of raw rows — powers <MarketGrid>.
+  groupedMarkets: (params = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== "" && v !== null)
+    ).toString();
+    return fetch(`${BASE}/markets/grouped${qs ? `?${qs}` : ""}`).then(handle);
+  },
   history: (slug, interval = "max") =>
     fetch(`${BASE}/markets/${encodeURIComponent(slug)}/history?interval=${interval}`).then(handle),
   // Sibling markets under the same Polymarket event (e.g. other candidates

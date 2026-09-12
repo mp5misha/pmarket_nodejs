@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   getDb,
   queryMarkets,
+  queryMarketsGrouped,
   getMarket,
   getMarketsByEvent,
   getStats,
@@ -58,6 +59,26 @@ app.get("/api/markets", (req, res) => {
     tag: tag || undefined,
     page: page ? Number(page) : 1,
     pageSize: pageSize ? Number(pageSize) : 50,
+  });
+  res.json(result);
+});
+
+// Event/market grid (Phase 1) — same filters as /api/markets, but grouped by
+// Polymarket event and paginated over groups. /api/markets stays untouched
+// (flat, ungrouped) since CSV export and the bulk price-refresh selection
+// still depend on that shape.
+app.get("/api/markets/grouped", (req, res) => {
+  const { search, status, sortBy, minVolume, minPrice, maxPrice, tag, page, pageSize } = req.query;
+  const result = queryMarketsGrouped(getDb(DEFAULT_DB_PATH), {
+    search,
+    status,
+    sortBy,
+    minVolume: minVolume ? Number(minVolume) : 0,
+    minPrice: minPrice !== undefined && minPrice !== "" ? Number(minPrice) : null,
+    maxPrice: maxPrice !== undefined && maxPrice !== "" ? Number(maxPrice) : null,
+    tag: tag || undefined,
+    page: page ? Number(page) : 1,
+    pageSize: pageSize ? Number(pageSize) : 25,
   });
   res.json(result);
 });

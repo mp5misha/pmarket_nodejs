@@ -162,13 +162,23 @@ proxies `/api/*` requests to the Express server, so both need to be running.
   (needed for the min/max columns and the chart — it's slower, one extra API
   call per market, with an editable delay between those calls to stay easy on
   Polymarket's API). Click **Run sync** and a progress bar tracks it live.
-- **Table** — search by keyword, filter by status, sort by volume / liquidity
-  / price / resolution date, filter by minimum volume, filter by price range
-  (min/max current price), and filter by category/tag (populated from
-  whatever's been synced). Shows the Yes and No price in separate columns,
-  which Polymarket event (if any) a market belongs to, and is paginated (25
-  /50/100/200 rows per page) once you've synced more than a page's worth.
-  Click any row to open its detail panel below.
+- **Market grid** — search by keyword, filter by status, filter by minimum
+  volume, filter by price range (min/max current Yes price), and filter by
+  category/tag (populated from whatever's been synced). Markets that share a
+  Polymarket event (e.g. each candidate in an election) are grouped under one
+  event header row instead of appearing as unrelated rows; a market with no
+  event is its own single-row group. Each row shows Yes price, No price, and
+  the implied probability (the stored price itself — Polymarket's per-share
+  price already functions as the market's implied probability; this app
+  doesn't currently fetch live order-book best bid/ask, only Gamma's last
+  traded price). Sort by volume, liquidity, implied probability, event date,
+  or resolved-first, and paginate (10/25/50/100 rows per page — a "page" is a
+  page of event groups, not raw market rows). An auto-refresh interval
+  (off/15s/30s/1m/5m) re-polls what's stored in the database — it does not
+  itself hit Polymarket on a timer; use **Run sync** or **Update selected
+  prices** to actually pull fresh data. A resolved market shows a "Resolved"
+  badge instead of a last-updated time. Click any row to open its detail
+  panel below.
 - **Bulk price update** — check one or more rows, then click **Update
   selected prices** to re-fetch just those markets' current price, volume,
   and liquidity from Polymarket without re-running a full sync. Any
@@ -222,6 +232,26 @@ configured either way, the button returns a clear "not configured" error
 (with a link straight to Settings) instead of failing silently. A full
 analysis can take a while — the Vercel function's `maxDuration` is set to
 60s to give it room (still clamped lower on the Hobby plan).
+
+## Database migrations (`server/`)
+
+The Express/SQLite backend now tracks schema changes as numbered files in
+`server/migrations/`, applied in order on startup and recorded in a
+`schema_migrations` table — instead of the old pattern of inline
+`CREATE TABLE IF NOT EXISTS` / conditional `ALTER TABLE` logic re-run on
+every boot. Two file types:
+- `NNN_name.sql` — plain DDL, executed verbatim.
+- `NNN_name.cjs` — for migrations needing JS logic (e.g. backfilling data),
+  exporting `up(db)`. `.cjs` specifically: this project is `"type": "module"`,
+  and a plain `.js` file can't be `require`'d synchronously there, which
+  `better-sqlite3`'s API needs.
+
+Add a new migration by dropping a new numbered file in that folder — nothing
+else to wire up. The **Vercel/Postgres path (`api/`, `lib/`) is not on this
+migration system** and still uses its own inline `CREATE TABLE IF NOT
+EXISTS` / `ALTER TABLE ADD COLUMN IF NOT EXISTS` schema string; Express/SQLite
+is the actively-developed target going forward, with Postgres parity treated
+as a later porting pass rather than kept in lockstep with every change.
 
 ## Notes
 
