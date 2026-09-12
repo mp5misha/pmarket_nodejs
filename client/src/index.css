@@ -1087,6 +1087,41 @@ table.ledger tbody tr.highlighted-row:hover {
   gap: 6px;
 }
 
+.bankroll-dashboard {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 24px;
+  padding: 16px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--panel);
+  margin-bottom: 16px;
+}
+
+.bankroll-metric .label {
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.bankroll-metric .value {
+  font-size: 20px;
+  font-weight: 600;
+  font-family: var(--font-serif);
+}
+
+.bankroll-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.bankroll-ledger-panel {
+  margin-bottom: 20px;
+}
+
 .trades-status-tabs {
   margin-bottom: 14px;
 }

@@ -40,6 +40,13 @@ export default function SettingsModal({ onClose, onStatusChange }) {
   const [betSizingError, setBetSizingError] = useState(null);
   const [betSizingNote, setBetSizingNote] = useState(null);
 
+  // Phase 7: bankroll settings (starting amount, currency, max % per bet,
+  // auto-deduct) — the ledger itself lives on the My Trades tab.
+  const [bankrollDraft, setBankrollDraft] = useState(null);
+  const [savingBankroll, setSavingBankroll] = useState(false);
+  const [bankrollError, setBankrollError] = useState(null);
+  const [bankrollNote, setBankrollNote] = useState(null);
+
   const refreshStatus = async () => {
     try {
       const s = await api.getDeepSeekKeyStatus();
@@ -76,6 +83,14 @@ export default function SettingsModal({ onClose, onStatusChange }) {
     }
   };
 
+  const refreshBankroll = async () => {
+    try {
+      setBankrollDraft(await api.getBankroll());
+    } catch (err) {
+      setBankrollError(err.message);
+    }
+  };
+
   const selectTemplateForEdit = (value, list = templates) => {
     if (value === "new") {
       setSelectedTemplateId("new");
@@ -109,9 +124,25 @@ export default function SettingsModal({ onClose, onStatusChange }) {
     refreshPrompt();
     refreshModel();
     refreshTemplates();
+    refreshBankroll();
     refreshBetSizing();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const saveBankroll = async () => {
+    setSavingBankroll(true);
+    setBankrollError(null);
+    setBankrollNote(null);
+    try {
+      setBankrollDraft(await api.setBankroll(bankrollDraft));
+      setBankrollNote("Bankroll settings saved.");
+      refreshBetSizing(); // the derived bankrollAmount there may have changed
+    } catch (err) {
+      setBankrollError(err.message);
+    } finally {
+      setSavingBankroll(false);
+    }
+  };
 
   const saveBetSizing = async () => {
     setSavingBetSizing(true);
@@ -485,24 +516,78 @@ export default function SettingsModal({ onClose, onStatusChange }) {
 
           <hr className="modal-divider" />
 
+          <p className="settings-label">Bankroll</p>
+          <p className="settings-hint">
+            The starting amount, plus every trade entry/win and manual deposit/withdrawal
+            (tracked in the ledger — see the <strong>My Trades</strong> tab), makes up your current
+            bankroll balance used for stake suggestions and the max-per-bet cap below.
+          </p>
+          {bankrollDraft && (
+            <>
+              <label className="settings-field-label" htmlFor="br-amount">
+                Starting bankroll amount
+              </label>
+              <input
+                id="br-amount"
+                type="number"
+                min={0}
+                value={bankrollDraft.amount}
+                onChange={(e) => setBankrollDraft({ ...bankrollDraft, amount: Number(e.target.value) })}
+              />
+              <label className="settings-field-label" htmlFor="br-currency">
+                Currency
+              </label>
+              <input
+                id="br-currency"
+                type="text"
+                maxLength={8}
+                value={bankrollDraft.currency}
+                onChange={(e) => setBankrollDraft({ ...bankrollDraft, currency: e.target.value })}
+              />
+              <label className="settings-field-label" htmlFor="br-max-pct">
+                Max % of bankroll per bet
+              </label>
+              <input
+                id="br-max-pct"
+                type="number"
+                min={0}
+                max={100}
+                step={1}
+                value={bankrollDraft.maxPctPerBet}
+                onChange={(e) => setBankrollDraft({ ...bankrollDraft, maxPctPerBet: Number(e.target.value) })}
+              />
+              <label className="field-row" style={{ marginTop: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={bankrollDraft.autoDeduct}
+                  onChange={(e) => setBankrollDraft({ ...bankrollDraft, autoDeduct: e.target.checked })}
+                />
+                Auto-deduct stakes from the bankroll ledger when a trade is recorded
+              </label>
+
+              {bankrollError && <p className="sync-error">{bankrollError}</p>}
+              {bankrollNote && <p className="settings-note">{bankrollNote}</p>}
+
+              <div className="modal-actions">
+                <button className="btn" onClick={saveBankroll} disabled={savingBankroll}>
+                  {savingBankroll ? "Saving…" : "Save bankroll settings"}
+                </button>
+              </div>
+            </>
+          )}
+
+          <hr className="modal-divider" />
+
           <p className="settings-label">Bet sizing</p>
           <p className="settings-hint">
-            Used by the "Suggested stake" calculator on a market's detail panel. Bankroll here is a
-            plain number for sizing suggestions against — a full bankroll (currency, per-bet cap,
-            auto-deduct, ledger) is configured separately.
+            Used by the "Suggested stake" calculator on a market's detail panel, sized against your
+            current bankroll balance (above).
           </p>
           {betSizingDraft && (
             <>
-              <label className="settings-field-label" htmlFor="bs-bankroll">
-                Bankroll for sizing suggestions ($)
-              </label>
-              <input
-                id="bs-bankroll"
-                type="number"
-                min={0}
-                value={betSizingDraft.bankrollAmount}
-                onChange={(e) => setBetSizingDraft({ ...betSizingDraft, bankrollAmount: Number(e.target.value) })}
-              />
+              <p className="settings-status">
+                Current bankroll for sizing: ${betSizingDraft.bankrollAmount.toLocaleString()}
+              </p>
               <label className="settings-field-label" htmlFor="bs-kelly">
                 Kelly fraction (0–1, default 0.25)
               </label>

@@ -232,10 +232,35 @@ methods, all configured in ⚙ **Settings → Bet sizing**:
 Every suggestion shows its full breakdown (edge, full-Kelly fraction, the
 fraction actually applied, and the resulting dollar amount) before you click
 **Use this stake** to copy it into the Stake field — nothing is auto-filled
-without that click. The "bankroll" here is a plain configured number for
-sizing purposes; Phase 7 (below) adds a full bankroll with currency, a
-per-bet cap, auto-deduct, and a ledger, building on this same setting rather
-than replacing it.
+without that click. The "bankroll" used for every method is your live
+current bankroll balance (see below), not a value you edit here.
+
+### Bankroll (Express/SQLite only)
+
+⚙ **Settings → Bankroll** configures:
+
+- **Starting bankroll amount** and **currency** — the baseline your bankroll
+  is tracked from.
+- **Max % of bankroll per bet** — a hard cap; **Mark as traded** rejects a
+  stake larger than this percentage of your *current* bankroll balance
+  (not the starting amount), with the dollar cap spelled out in the error.
+- **Auto-deduct** — when on, recording a trade immediately debits its stake
+  from the bankroll ledger; a win later credits the full payout back. When
+  off, trades are tracked for P&L as usual but never touch the ledger.
+
+The **My Trades** tab shows a dashboard above the trades table: current
+**Bankroll** balance, **Staked** (sum of all open trades' stakes, with how
+many are open), **Realized P&L** (sum of profit across every resolved
+trade), and **Exposure** (staked as a % of the current bankroll). **Show
+ledger** reveals every ledger entry (starting amount aside, each trade's
+auto-deduct debit/credit plus any manual entries) and a form to record a
+manual **deposit** or **withdrawal** — for cash added or removed outside
+the app's own trade tracking. Deleting a trade also removes its ledger
+entries, keeping the balance consistent.
+
+The bankroll balance is always `startingAmount + sum(all ledger entries)`,
+computed fresh on every read rather than stored as its own number, so it
+can never drift out of sync with the ledger.
 
 ## Market Discovery (Express/SQLite only)
 

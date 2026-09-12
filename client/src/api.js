@@ -207,12 +207,30 @@ export const api = {
     }),
   checkTradeResolutions: () => fetch(`${BASE}/trades/check-resolutions`, { method: "POST" }).then(handle),
 
-  // Bet-sizing configuration (Phase 6) — bankroll amount, Kelly fraction,
-  // flat stake, fixed percentage. `bankrollAmount` is superseded by a full
-  // bankroll system in Phase 7, but the same setting carries forward.
+  // Bet-sizing configuration (Phase 6) — Kelly fraction, flat stake, fixed
+  // percentage. The response's `bankrollAmount` is the live bankroll
+  // balance (Phase 7's ledger-backed figure) — set the starting amount via
+  // getBankroll/setBankroll instead of here.
   getBetSizing: () => fetch(`${BASE}/settings/bet-sizing`).then(handle),
   setBetSizing: (params) =>
     fetch(`${BASE}/settings/bet-sizing`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    }).then(handle),
+
+  // Bankroll settings, dashboard, and ledger (Phase 7).
+  getBankroll: () => fetch(`${BASE}/settings/bankroll`).then(handle),
+  setBankroll: (params) =>
+    fetch(`${BASE}/settings/bankroll`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    }).then(handle),
+  getBankrollDashboard: () => fetch(`${BASE}/bankroll/dashboard`).then(handle),
+  listBankrollLedger: (limit) => fetch(`${BASE}/bankroll/ledger${limit ? `?limit=${limit}` : ""}`).then(handle),
+  addLedgerEntry: (params) =>
+    fetch(`${BASE}/bankroll/ledger`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),

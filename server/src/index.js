@@ -42,6 +42,11 @@ import {
   listOpenTradeSlugs,
   deleteTrade,
   resolveTrade,
+  createLedgerEntry,
+  listLedgerEntries,
+  getLedgerNetDelta,
+  hasDebitForTrade,
+  deleteLedgerEntriesForTrade,
   DEFAULT_DB_PATH,
 } from "./db.js";
 import { fetchPriceHistory } from "./polymarket.js";
@@ -370,27 +375,120 @@ app.post("/api/settings/highlight-threshold", (req, res) => {
   res.status(200).json({ thresholdPct: n });
 });
 
+// Phase 7: bankroll settings and ledger. The ledger (ledger entries: manual
+// deposit/withdrawal, or debit/credit auto-tied to a trade) layers on top
+// of this settings object's `amount` (the starting/reference bankroll) —
+// current balance = amount + net(ledger).
+const BANKROLL_SETTING = "bankroll_settings";
+const DEFAULT_BANKROLL = {
+  amount: 1000,
+  currency: "USD",
+  maxPctPerBet: 10,
+  autoDeduct: true,
+};
+
+function bankrollStatus() {
+  const stored = getSetting(getDb(DEFAULT_DB_PATH), BANKROLL_SETTING);
+  if (!stored) return { ...DEFAULT_BANKROLL };
+  try {
+    return { ...DEFAULT_BANKROLL, ...JSON.parse(stored) };
+  } catch {
+    return { ...DEFAULT_BANKROLL };
+  }
+}
+
+function currentBankrollBalance(db) {
+  return bankrollStatus().amount + getLedgerNetDelta(db);
+}
+
+app.get("/api/settings/bankroll", (req, res) => {
+  res.json(bankrollStatus());
+});
+
+app.post("/api/settings/bankroll", (req, res) => {
+  const { amount, currency, maxPctPerBet, autoDeduct } = req.body || {};
+  const current = bankrollStatus();
+  const next = {
+    amount: amount != null ? Number(amount) : current.amount,
+    currency: currency != null ? String(currency).toUpperCase().slice(0, 8) : current.currency,
+    maxPctPerBet: maxPctPerBet != null ? Number(maxPctPerBet) : current.maxPctPerBet,
+    autoDeduct: autoDeduct != null ? Boolean(autoDeduct) : current.autoDeduct,
+  };
+  if (!Number.isFinite(next.amount) || next.amount < 0) {
+    return res.status(400).json({ error: "amount must be a non-negative number" });
+  }
+  if (!Number.isFinite(next.maxPctPerBet) || next.maxPctPerBet <= 0 || next.maxPctPerBet > 100) {
+    return res.status(400).json({ error: "maxPctPerBet must be between 0 and 100" });
+  }
+  setSetting(getDb(DEFAULT_DB_PATH), BANKROLL_SETTING, JSON.stringify(next));
+  res.status(200).json(next);
+});
+
+// Dashboard: current bankroll, amount staked in open trades, realized P&L,
+// and exposure (staked as a % of current bankroll).
+app.get("/api/bankroll/dashboard", (req, res) => {
+  const db = getDb(DEFAULT_DB_PATH);
+  const settings = bankrollStatus();
+  const balance = currentBankrollBalance(db);
+  const openTrades = listTrades(db, { status: "open" });
+  const staked = openTrades.reduce((sum, t) => sum + t.stake, 0);
+  const resolvedTrades = [...listTrades(db, { status: "won" }), ...listTrades(db, { status: "lost" })];
+  const realizedPnl = resolvedTrades.reduce((sum, t) => sum + (t.profit ?? 0), 0);
+  res.json({
+    balance,
+    currency: settings.currency,
+    startingAmount: settings.amount,
+    staked,
+    openTradeCount: openTrades.length,
+    realizedPnl,
+    exposurePct: balance > 0 ? (staked / balance) * 100 : 0,
+  });
+});
+
+app.get("/api/bankroll/ledger", (req, res) => {
+  const { limit } = req.query;
+  res.json(listLedgerEntries(getDb(DEFAULT_DB_PATH), { limit: limit ? Number(limit) : 100 }));
+});
+
+// Manual ledger entries (deposit/withdrawal) — debit/credit entries are
+// created automatically by trade creation/resolution below.
+app.post("/api/bankroll/ledger", (req, res) => {
+  const { entryType, amount, note } = req.body || {};
+  if (!["deposit", "withdrawal"].includes(entryType)) {
+    return res.status(400).json({ error: "entryType must be 'deposit' or 'withdrawal'" });
+  }
+  const amt = Number(amount);
+  if (!Number.isFinite(amt) || amt <= 0) {
+    return res.status(400).json({ error: "amount must be a positive number" });
+  }
+  const entry = createLedgerEntry(getDb(DEFAULT_DB_PATH), { entryType, amount: amt, note: note || null });
+  res.status(201).json(entry);
+});
+
 // Phase 6: bet-sizing configuration shared by all three staking methods the
-// suggestion calculator offers. `bankrollAmount` here is a bare number to
-// size Kelly/fixed-percentage suggestions against — Phase 7 formalizes a
-// full bankroll (currency, max % per bet, auto-deduct, a ledger) on top of
-// this same setting rather than replacing it.
+// suggestion calculator offers. `bankrollAmount` in the response is the
+// live current bankroll balance (Phase 7's ledger-backed figure), not a
+// value stored/edited here — set the starting amount under Bankroll
+// settings instead.
 const BET_SIZING_SETTING = "bet_sizing";
 const DEFAULT_BET_SIZING = {
-  bankrollAmount: 1000,
   kellyFraction: 0.25,
   flatStakeAmount: 50,
   fixedPercentagePct: 2,
 };
 
 function betSizingStatus() {
-  const stored = getSetting(getDb(DEFAULT_DB_PATH), BET_SIZING_SETTING);
-  if (!stored) return { ...DEFAULT_BET_SIZING };
-  try {
-    return { ...DEFAULT_BET_SIZING, ...JSON.parse(stored) };
-  } catch {
-    return { ...DEFAULT_BET_SIZING };
+  const db = getDb(DEFAULT_DB_PATH);
+  const stored = getSetting(db, BET_SIZING_SETTING);
+  let configured = { ...DEFAULT_BET_SIZING };
+  if (stored) {
+    try {
+      configured = { ...DEFAULT_BET_SIZING, ...JSON.parse(stored) };
+    } catch {
+      /* fall back to defaults */
+    }
   }
+  return { ...configured, bankrollAmount: currentBankrollBalance(db) };
 }
 
 app.get("/api/settings/bet-sizing", (req, res) => {
@@ -398,10 +496,9 @@ app.get("/api/settings/bet-sizing", (req, res) => {
 });
 
 app.post("/api/settings/bet-sizing", (req, res) => {
-  const { bankrollAmount, kellyFraction, flatStakeAmount, fixedPercentagePct } = req.body || {};
+  const { kellyFraction, flatStakeAmount, fixedPercentagePct } = req.body || {};
   const current = betSizingStatus();
   const next = {
-    bankrollAmount: bankrollAmount != null ? Number(bankrollAmount) : current.bankrollAmount,
     kellyFraction: kellyFraction != null ? Number(kellyFraction) : current.kellyFraction,
     flatStakeAmount: flatStakeAmount != null ? Number(flatStakeAmount) : current.flatStakeAmount,
     fixedPercentagePct: fixedPercentagePct != null ? Number(fixedPercentagePct) : current.fixedPercentagePct,
@@ -415,7 +512,7 @@ app.post("/api/settings/bet-sizing", (req, res) => {
     return res.status(400).json({ error: "kellyFraction must be between 0 and 1" });
   }
   setSetting(getDb(DEFAULT_DB_PATH), BET_SIZING_SETTING, JSON.stringify(next));
-  res.status(200).json(next);
+  res.status(200).json({ ...next, bankrollAmount: currentBankrollBalance(getDb(DEFAULT_DB_PATH)) });
 });
 
 // Phase 5: manually-recorded trades and their automatic resolution.
@@ -439,6 +536,17 @@ app.post("/api/trades", (req, res) => {
   }
   const db = getDb(DEFAULT_DB_PATH);
   if (!getMarket(db, marketSlug)) return res.status(404).json({ error: "Market not found" });
+
+  // Phase 7: enforce the bankroll's configured max % per bet.
+  const bankroll = bankrollStatus();
+  const balance = currentBankrollBalance(db);
+  const maxStake = (bankroll.maxPctPerBet / 100) * balance;
+  if (stakeAmount > maxStake) {
+    return res.status(400).json({
+      error: `Stake exceeds the ${bankroll.maxPctPerBet}% max-per-bet cap (max $${maxStake.toFixed(2)} of your $${balance.toFixed(2)} bankroll)`,
+    });
+  }
+
   const trade = createTrade(db, {
     marketSlug,
     side,
@@ -447,11 +555,24 @@ app.post("/api/trades", (req, res) => {
     placedAt: placedAt || undefined,
     note: note || null,
   });
+
+  // Auto-deduct: debit the stake from the bankroll ledger immediately.
+  if (bankroll.autoDeduct) {
+    createLedgerEntry(db, {
+      entryType: "debit",
+      amount: stakeAmount,
+      tradeId: trade.id,
+      note: `Trade entry: ${marketSlug} (${side.toUpperCase()})`,
+    });
+  }
+
   res.status(201).json(trade);
 });
 
 app.delete("/api/trades/:id", (req, res) => {
-  deleteTrade(getDb(DEFAULT_DB_PATH), req.params.id);
+  const db = getDb(DEFAULT_DB_PATH);
+  deleteLedgerEntriesForTrade(db, req.params.id);
+  deleteTrade(db, req.params.id);
   res.status(204).end();
 });
 
@@ -735,6 +856,17 @@ async function checkTradeResolutions() {
       const payout = won ? trade.stake / trade.entry_price : 0;
       const profit = payout - trade.stake;
       resolveTrade(db, trade.id, { status: won ? "won" : "lost", payout, profit });
+      // Credit the ledger on a win, but only for trades whose stake was
+      // actually auto-deducted at entry — a trade placed with autoDeduct
+      // off never touched the ledger, so it shouldn't credit one either.
+      if (won && hasDebitForTrade(db, trade.id)) {
+        createLedgerEntry(db, {
+          entryType: "credit",
+          amount: payout,
+          tradeId: trade.id,
+          note: `Trade won: ${slug}`,
+        });
+      }
       resolved += 1;
     }
   }

@@ -499,6 +499,45 @@ export function resolveTrade(db, id, { status, payout, profit }) {
   return getTrade(db, id);
 }
 
+// Bankroll ledger (Phase 7) — layered on top of the starting bankroll
+// amount (a setting, see index.js): current balance = starting amount +
+// sum(deposit/credit) - sum(withdrawal/debit).
+export function createLedgerEntry(db, { entryType, amount, tradeId = null, note = null }) {
+  const now = new Date().toISOString();
+  const result = db
+    .prepare(
+      `INSERT INTO bankroll_ledger (entry_type, amount, trade_id, note, created_at) VALUES (?, ?, ?, ?, ?)`
+    )
+    .run(entryType, amount, tradeId, note, now);
+  return getLedgerEntry(db, result.lastInsertRowid);
+}
+
+export function getLedgerEntry(db, id) {
+  return db.prepare("SELECT * FROM bankroll_ledger WHERE id = ?").get(id);
+}
+
+export function listLedgerEntries(db, { limit = 100 } = {}) {
+  return db.prepare("SELECT * FROM bankroll_ledger ORDER BY created_at DESC LIMIT ?").all(limit);
+}
+
+export function getLedgerNetDelta(db) {
+  const rows = db.prepare("SELECT entry_type, amount FROM bankroll_ledger").all();
+  let net = 0;
+  for (const r of rows) {
+    if (r.entry_type === "deposit" || r.entry_type === "credit") net += r.amount;
+    else net -= r.amount;
+  }
+  return net;
+}
+
+export function hasDebitForTrade(db, tradeId) {
+  return !!db.prepare("SELECT 1 FROM bankroll_ledger WHERE trade_id = ? AND entry_type = 'debit'").get(tradeId);
+}
+
+export function deleteLedgerEntriesForTrade(db, tradeId) {
+  db.prepare("DELETE FROM bankroll_ledger WHERE trade_id = ?").run(tradeId);
+}
+
 /** Audit trail of catalog fetches (ad hoc or from a saved search), Phase 2. */
 export function createFetchRun(db, { savedSearchId = null, filters }) {
   const result = db
