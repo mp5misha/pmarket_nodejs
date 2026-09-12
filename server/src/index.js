@@ -10,6 +10,9 @@ import {
   getStats,
   getAllForExport,
   getTags,
+  getSetting,
+  setSetting,
+  deleteSetting,
   DEFAULT_DB_PATH,
 } from "./db.js";
 import { fetchPriceHistory } from "./polymarket.js";
@@ -18,9 +21,19 @@ import { analyzeMarket } from "./deepseek.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
+const DEEPSEEK_KEY_SETTING = "deepseek_api_key";
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+/** Reports whether a DeepSeek key is available and where it came from,
+ * without ever sending the key itself back to the client. */
+function deepseekKeyStatus() {
+  const stored = getSetting(getDb(DEFAULT_DB_PATH), DEEPSEEK_KEY_SETTING);
+  if (stored) return { configured: true, source: "database" };
+  if (process.env.DEEPSEEK_API_KEY) return { configured: true, source: "env" };
+  return { configured: false, source: "none" };
+}
 
 app.get("/api/stats", (req, res) => {
   res.json(getStats(getDb(DEFAULT_DB_PATH)));
@@ -70,11 +83,30 @@ app.post("/api/markets/:slug/analyze", async (req, res) => {
   const row = getMarket(getDb(DEFAULT_DB_PATH), req.params.slug);
   if (!row) return res.status(404).json({ error: "Market not found" });
   try {
-    const analysis = await analyzeMarket(row.slug);
+    const apiKey = getSetting(getDb(DEFAULT_DB_PATH), DEEPSEEK_KEY_SETTING);
+    const analysis = await analyzeMarket(row.slug, { apiKey });
     res.status(200).json({ analysis });
   } catch (err) {
     res.status(502).json({ error: String(err.message ?? err) });
   }
+});
+
+app.get("/api/settings/deepseek-key", (req, res) => {
+  res.json(deepseekKeyStatus());
+});
+
+app.post("/api/settings/deepseek-key", (req, res) => {
+  const { apiKey } = req.body || {};
+  if (typeof apiKey !== "string" || !apiKey.trim()) {
+    return res.status(400).json({ error: "apiKey is required" });
+  }
+  setSetting(getDb(DEFAULT_DB_PATH), DEEPSEEK_KEY_SETTING, apiKey.trim());
+  res.status(200).json(deepseekKeyStatus());
+});
+
+app.delete("/api/settings/deepseek-key", (req, res) => {
+  deleteSetting(getDb(DEFAULT_DB_PATH), DEEPSEEK_KEY_SETTING);
+  res.status(200).json(deepseekKeyStatus());
 });
 
 app.get("/api/export", (req, res) => {

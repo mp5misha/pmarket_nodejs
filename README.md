@@ -185,21 +185,26 @@ sends this prompt to DeepSeek's chat completions API and displays the reply:
 > `{market slug}`
 
 This needs a DeepSeek API key (get one at
-[platform.deepseek.com](https://platform.deepseek.com)) set as an environment
-variable wherever the API runs:
+[platform.deepseek.com](https://platform.deepseek.com)). Set it up either way:
 
-- **Local (`server/`)**: `export DEEPSEEK_API_KEY=sk-...` before `npm start`.
-- **Render/Railway**: add `DEEPSEEK_API_KEY` under the service's environment
-  variables.
-- **Vercel**: add `DEEPSEEK_API_KEY` under **Settings → Environment
-  Variables**.
+- **In the app** — click the ⚙ **Settings** button at the top of the sidebar
+  (it shows a red dot when no key is configured), paste the key, and click
+  **Save**. It's stored in the app's own database (SQLite locally, Postgres
+  on Vercel) — no redeploy or restart needed, and it survives them. Use
+  **Clear saved key** to remove it.
+- **As an environment variable** — `DEEPSEEK_API_KEY`, set wherever the API
+  runs (`export DEEPSEEK_API_KEY=sk-...` locally before `npm start`; under
+  the service's environment variables on Render/Railway; under **Settings →
+  Environment Variables** on Vercel). Used as a fallback whenever no key is
+  saved in the app itself.
 
-Optional overrides: `DEEPSEEK_MODEL` (default `deepseek-chat`) and
-`DEEPSEEK_BASE_URL` (default `https://api.deepseek.com`, for a proxy or
-compatible endpoint). Without `DEEPSEEK_API_KEY` set, the button returns a
-clear "not configured" error instead of failing silently. A full analysis
-can take a while — the Vercel function's `maxDuration` is set to 60s to give
-it room (still clamped lower on the Hobby plan).
+Optional overrides (environment variables only): `DEEPSEEK_MODEL` (default
+`deepseek-chat`) and `DEEPSEEK_BASE_URL` (default
+`https://api.deepseek.com`, for a proxy or compatible endpoint). With no key
+configured either way, the button returns a clear "not configured" error
+(with a link straight to Settings) instead of failing silently. A full
+analysis can take a while — the Vercel function's `maxDuration` is set to
+60s to give it room (still clamped lower on the Hobby plan).
 
 ## Notes
 

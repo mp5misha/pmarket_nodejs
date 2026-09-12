@@ -3,6 +3,7 @@ import { api } from "./api.js";
 import Sidebar from "./components/Sidebar.jsx";
 import MarketTable from "./components/MarketTable.jsx";
 import MarketDetail from "./components/MarketDetail.jsx";
+import SettingsModal from "./components/SettingsModal.jsx";
 
 export default function App() {
   const [stats, setStats] = useState({ count: 0, lastUpdated: null });
@@ -24,11 +25,21 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState(null);
   const [syncStatus, setSyncStatus] = useState({ running: false, total: 0, limit: 0 });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [deepseekStatus, setDeepseekStatus] = useState(null);
   const cancelRef = useRef(false);
 
   const refreshStats = async () => {
     try {
       setStats(await api.stats());
+    } catch {
+      /* non-fatal */
+    }
+  };
+
+  const refreshDeepseekStatus = async () => {
+    try {
+      setDeepseekStatus(await api.getDeepSeekKeyStatus());
     } catch {
       /* non-fatal */
     }
@@ -68,6 +79,7 @@ export default function App() {
     refreshStats();
     refreshTags();
     refreshMarkets();
+    refreshDeepseekStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -180,8 +192,10 @@ export default function App() {
         stats={stats}
         syncStatus={syncStatus}
         tags={tags}
+        deepseekStatus={deepseekStatus}
         onSync={startSync}
         onExport={() => window.open(api.exportUrl(), "_blank")}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
       <main className="main">
         <h2>Polymarket Markets</h2>
@@ -271,8 +285,17 @@ export default function App() {
           </>
         )}
 
-        {selected && <MarketDetail market={selected} />}
+        {selected && (
+          <MarketDetail market={selected} onOpenSettings={() => setSettingsOpen(true)} />
+        )}
       </main>
+
+      {settingsOpen && (
+        <SettingsModal
+          onClose={() => setSettingsOpen(false)}
+          onStatusChange={setDeepseekStatus}
+        />
+      )}
     </div>
   );
 }

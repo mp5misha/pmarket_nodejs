@@ -1,5 +1,6 @@
-import { getPool, ensureSchema, getMarket } from "../../../lib/db.js";
+import { getPool, ensureSchema, getMarket, getSetting } from "../../../lib/db.js";
 import { analyzeMarket } from "../../../lib/deepseek.js";
+import { DEEPSEEK_KEY_SETTING } from "../../../lib/settings.js";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -11,7 +12,8 @@ export default async function handler(req, res) {
     await ensureSchema(pool);
     const row = await getMarket(pool, req.query.slug);
     if (!row) return res.status(404).json({ error: "Market not found" });
-    const analysis = await analyzeMarket(row.slug);
+    const apiKey = await getSetting(pool, DEEPSEEK_KEY_SETTING);
+    const analysis = await analyzeMarket(row.slug, { apiKey });
     res.status(200).json({ analysis });
   } catch (err) {
     res.status(502).json({ error: String(err.message ?? err) });

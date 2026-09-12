@@ -12,11 +12,14 @@ export function buildAnalysisPrompt(slug) {
 
 /** Sends the analysis prompt for one market slug to DeepSeek's (OpenAI-
  * compatible) chat completions API and returns the assistant's reply text.
- * Requires DEEPSEEK_API_KEY to be set in the environment. */
-export async function analyzeMarket(slug) {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-  if (!apiKey) {
-    throw new Error("DEEPSEEK_API_KEY is not configured on the server.");
+ * `apiKey`, when given (the key saved via the app's settings window), takes
+ * precedence over the DEEPSEEK_API_KEY environment variable. */
+export async function analyzeMarket(slug, { apiKey } = {}) {
+  const key = apiKey || process.env.DEEPSEEK_API_KEY;
+  if (!key) {
+    throw new Error(
+      "No DeepSeek API key configured. Set one in Settings, or via the DEEPSEEK_API_KEY environment variable."
+    );
   }
 
   const controller = new AbortController();
@@ -27,7 +30,7 @@ export async function analyzeMarket(slug) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${key}`,
       },
       body: JSON.stringify({
         model: DEEPSEEK_MODEL,

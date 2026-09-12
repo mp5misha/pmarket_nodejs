@@ -10,7 +10,7 @@ import {
 } from "recharts";
 import { api } from "../api.js";
 
-export default function MarketDetail({ market }) {
+export default function MarketDetail({ market, onOpenSettings }) {
   const [history, setHistory] = useState(null);
   const [loadingHist, setLoadingHist] = useState(false);
   const [histError, setHistError] = useState(null);
@@ -118,7 +118,16 @@ export default function MarketDetail({ market }) {
             {loadingAnalysis ? "Analyzing…" : analysis ? "Re-analyze" : "Analyze with DeepSeek"}
           </button>
         </div>
-        {analysisError && <p className="sync-error">{analysisError}</p>}
+        {analysisError && (
+          <p className="sync-error">
+            {analysisError}{" "}
+            {onOpenSettings && (
+              <button className="link-button" onClick={onOpenSettings}>
+                Open settings
+              </button>
+            )}
+          </p>
+        )}
         {analysis && <div className="ai-analysis-text">{analysis}</div>}
       </div>
     </section>

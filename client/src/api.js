@@ -48,4 +48,16 @@ export const api = {
       body: JSON.stringify(opts),
     }).then(handle),
   exportUrl: () => `${BASE}/export`,
+  // Settings: the DeepSeek API key, configurable from the app itself instead
+  // of only via the DEEPSEEK_API_KEY environment variable. The key itself is
+  // never sent back — only whether one is set and where it came from.
+  getDeepSeekKeyStatus: () => fetch(`${BASE}/settings/deepseek-key`).then(handle),
+  setDeepSeekKey: (apiKey) =>
+    fetch(`${BASE}/settings/deepseek-key`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey }),
+    }).then(handle),
+  clearDeepSeekKey: () =>
+    fetch(`${BASE}/settings/deepseek-key`, { method: "DELETE" }).then(handle),
 };

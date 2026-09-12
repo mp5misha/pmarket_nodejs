@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-export default function Sidebar({ stats, syncStatus, tags, onSync, onExport }) {
+export default function Sidebar({ stats, syncStatus, tags, deepseekStatus, onSync, onExport, onOpenSettings }) {
   const [limit, setLimit] = useState(500);
   const [status, setStatus] = useState("active");
   const [tag, setTag] = useState("");
@@ -16,9 +16,20 @@ export default function Sidebar({ stats, syncStatus, tags, onSync, onExport }) {
 
   return (
     <aside className="sidebar">
-      <div>
-        <h1>Polymarket Tracker</h1>
-        <p className="tagline">Local dashboard for Polymarket's public market data.</p>
+      <div className="sidebar-top">
+        <div>
+          <h1>Polymarket Tracker</h1>
+          <p className="tagline">Local dashboard for Polymarket's public market data.</p>
+        </div>
+        <button
+          className="btn-icon"
+          onClick={onOpenSettings}
+          title="Settings"
+          aria-label="Settings"
+        >
+          ⚙
+          {deepseekStatus && !deepseekStatus.configured && <span className="btn-icon-dot" />}
+        </button>
       </div>
 
       <div className="stat-line">

@@ -27,6 +27,10 @@ CREATE TABLE IF NOT EXISTS markets (
 );
 CREATE INDEX IF NOT EXISTS idx_markets_volume ON markets(volume);
 CREATE INDEX IF NOT EXISTS idx_markets_resolution ON markets(resolution_date);
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT
+);
 `;
 
 let dbInstance = null;
@@ -161,4 +165,22 @@ export function getStats(db) {
 
 export function getAllForExport(db) {
   return db.prepare("SELECT * FROM markets ORDER BY volume DESC NULLS LAST").all();
+}
+
+/** Small generic key/value store — currently used to let the app's settings
+ * window save the DeepSeek API key without an environment variable. */
+export function getSetting(db, key) {
+  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
+  return row ? row.value : null;
+}
+
+export function setSetting(db, key, value) {
+  db.prepare(
+    `INSERT INTO settings (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).run(key, value);
+}
+
+export function deleteSetting(db, key) {
+  db.prepare("DELETE FROM settings WHERE key = ?").run(key);
 }
