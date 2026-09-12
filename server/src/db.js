@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_DB_PATH = path.join(__dirname, "..", "polymarket.db");
 
-const SCHEMA = `
+const CREATE_MARKETS_TABLE = `
 CREATE TABLE IF NOT EXISTS markets (
   slug            TEXT PRIMARY KEY,
   market_id       TEXT,
@@ -29,6 +29,12 @@ CREATE TABLE IF NOT EXISTS markets (
   event_title     TEXT,
   last_updated    TEXT
 );
+`;
+
+// Indexes (idx_markets_event references a column that's only guaranteed to
+// exist once the ALTER TABLEs in getDb() below have run) and the settings
+// table — created after those migrations, not before.
+const CREATE_INDEXES_AND_SETTINGS = `
 CREATE INDEX IF NOT EXISTS idx_markets_volume ON markets(volume);
 CREATE INDEX IF NOT EXISTS idx_markets_resolution ON markets(resolution_date);
 CREATE INDEX IF NOT EXISTS idx_markets_event ON markets(event_id);
@@ -46,9 +52,11 @@ export function getDb(dbPath = DEFAULT_DB_PATH) {
   if (dbInstance && dbInstancePath === dbPath) return dbInstance;
   if (dbInstance) dbInstance.close();
   dbInstance = new Database(dbPath);
-  dbInstance.exec(SCHEMA);
+  dbInstance.exec(CREATE_MARKETS_TABLE);
   // Columns added after the initial schema — CREATE TABLE IF NOT EXISTS won't
-  // retrofit them onto a database file created before each change.
+  // retrofit them onto a database file created before each change. These
+  // must run before CREATE_INDEXES_AND_SETTINGS, since idx_markets_event
+  // indexes a column that may not exist yet on an older database file.
   const columns = dbInstance.prepare("PRAGMA table_info(markets)").all().map((c) => c.name);
   const addColumnIfMissing = (name, ddl) => {
     if (!columns.includes(name)) dbInstance.exec(`ALTER TABLE markets ADD COLUMN ${ddl}`);
@@ -58,6 +66,7 @@ export function getDb(dbPath = DEFAULT_DB_PATH) {
   addColumnIfMissing("event_id", "event_id TEXT");
   addColumnIfMissing("event_slug", "event_slug TEXT");
   addColumnIfMissing("event_title", "event_title TEXT");
+  dbInstance.exec(CREATE_INDEXES_AND_SETTINGS);
   dbInstancePath = dbPath;
   return dbInstance;
 }
