@@ -87,6 +87,7 @@ import {
 } from "./deepseek.js";
 import { hashPassword, verifyPassword, generateToken, hashToken, generate2faCode } from "./auth.js";
 import { sendMail } from "./mailer.js";
+import { resolveTradeOutcome, winningSideFromPrice } from "./pnl.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
@@ -1154,20 +1155,21 @@ async function checkTradeResolutions() {
     const market = getMarket(db, slug);
     if (!market || !market.closed || market.current_price == null) continue;
 
-    let winningSide = null;
-    if (market.current_price >= 0.99) winningSide = "yes";
-    else if (market.current_price <= 0.01) winningSide = "no";
+    const winningSide = winningSideFromPrice(market.current_price);
     if (!winningSide) continue; // closed but not cleanly settled to 0/1 yet
 
     for (const trade of listTrades(db, { status: "open", marketSlug: slug })) {
-      const won = trade.side === winningSide;
-      const payout = won ? trade.stake / trade.entry_price : 0;
-      const profit = payout - trade.stake;
-      resolveTrade(db, trade.id, { status: won ? "won" : "lost", payout, profit });
+      const { status: outcome, payout, profit } = resolveTradeOutcome({
+        side: trade.side,
+        entryPrice: trade.entry_price,
+        stake: trade.stake,
+        winningSide,
+      });
+      resolveTrade(db, trade.id, { status: outcome, payout, profit });
       // Credit the ledger on a win, but only for trades whose stake was
       // actually auto-deducted at entry — a trade placed with autoDeduct
       // off never touched the ledger, so it shouldn't credit one either.
-      if (won && hasDebitForTrade(db, trade.id)) {
+      if (outcome === "won" && hasDebitForTrade(db, trade.id)) {
         createLedgerEntry(db, trade.user_id, {
           entryType: "credit",
           amount: payout,

@@ -508,6 +508,23 @@ the template picker and follow-up box simply don't appear (Settings falls
 back to the old single-prompt editor), and "Analyze" behaves as it did in
 Phase 3.
 
+## Tests
+
+Both `server/` and `client/` have an automated suite using Node's built-in
+test runner (`node:test` — no extra dependency):
+
+```bash
+cd server && npm test   # upsert idempotency, per-trade P&L math, 2FA flow
+cd client && npm test   # Kelly/flat/fixed-percentage stake calculations
+```
+
+Each writes to a temporary SQLite file (not `server/polymarket.db`) and
+cleans up after itself. These cover the specific areas most likely to
+silently break in a way that costs real money or locks someone out — the
+upsert path every sync depends on, the resolution math a trade's profit
+comes from, the stake-sizing formulas, and the login gate itself — rather
+than being a full coverage suite.
+
 ## Database migrations (`server/`)
 
 The Express/SQLite backend now tracks schema changes as numbered files in
