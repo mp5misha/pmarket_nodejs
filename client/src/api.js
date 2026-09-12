@@ -176,4 +176,34 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
     }).then(handle),
+
+  // Highlight threshold (Phase 5) — markets with implied Yes probability at
+  // or above this percentage are highlighted in the grid.
+  getHighlightThreshold: () => fetch(`${BASE}/settings/highlight-threshold`).then(handle),
+  setHighlightThreshold: (thresholdPct) =>
+    fetch(`${BASE}/settings/highlight-threshold`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ thresholdPct }),
+    }).then(handle),
+
+  // Manually-recorded trades (Phase 5) — resolved automatically once their
+  // market closes (see the server's in-process resolution checker).
+  listTrades: (params = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== "" && v !== null)
+    ).toString();
+    return fetch(`${BASE}/trades${qs ? `?${qs}` : ""}`).then(handle);
+  },
+  createTrade: (params) =>
+    fetch(`${BASE}/trades`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    }).then(handle),
+  deleteTrade: (id) =>
+    fetch(`${BASE}/trades/${id}`, { method: "DELETE" }).then((res) => {
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+    }),
+  checkTradeResolutions: () => fetch(`${BASE}/trades/check-resolutions`, { method: "POST" }).then(handle),
 };

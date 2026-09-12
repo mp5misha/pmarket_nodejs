@@ -448,6 +448,57 @@ export function deletePromptTemplate(db, id) {
   db.prepare("DELETE FROM prompt_templates WHERE id = ?").run(id);
 }
 
+// Manually-recorded trades (Phase 5) — created via "Mark as traded", then
+// resolved automatically once their market closes (see the in-process
+// resolution-checker in index.js).
+export function createTrade(db, { marketSlug, side, entryPrice, stake, placedAt, note = null }) {
+  const now = new Date().toISOString();
+  const result = db
+    .prepare(
+      `INSERT INTO trades (market_slug, side, entry_price, stake, placed_at, note, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?)`
+    )
+    .run(marketSlug, side, entryPrice, stake, placedAt || now, note, now, now);
+  return getTrade(db, result.lastInsertRowid);
+}
+
+export function getTrade(db, id) {
+  return db.prepare("SELECT * FROM trades WHERE id = ?").get(id);
+}
+
+export function listTrades(db, { status, marketSlug } = {}) {
+  const clauses = [];
+  const params = [];
+  if (status) {
+    clauses.push("status = ?");
+    params.push(status);
+  }
+  if (marketSlug) {
+    clauses.push("market_slug = ?");
+    params.push(marketSlug);
+  }
+  const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  return db.prepare(`SELECT * FROM trades ${where} ORDER BY placed_at DESC`).all(params);
+}
+
+export function listOpenTradeSlugs(db) {
+  return db
+    .prepare("SELECT DISTINCT market_slug FROM trades WHERE status = 'open'")
+    .all()
+    .map((r) => r.market_slug);
+}
+
+export function deleteTrade(db, id) {
+  db.prepare("DELETE FROM trades WHERE id = ?").run(id);
+}
+
+export function resolveTrade(db, id, { status, payout, profit }) {
+  db.prepare(
+    `UPDATE trades SET status = ?, payout = ?, profit = ?, resolved_at = ?, updated_at = ? WHERE id = ?`
+  ).run(status, payout, profit, new Date().toISOString(), new Date().toISOString(), id);
+  return getTrade(db, id);
+}
+
 /** Audit trail of catalog fetches (ad hoc or from a saved search), Phase 2. */
 export function createFetchRun(db, { savedSearchId = null, filters }) {
   const result = db

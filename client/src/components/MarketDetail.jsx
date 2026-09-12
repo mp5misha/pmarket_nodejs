@@ -52,6 +52,16 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
 
   const [related, setRelated] = useState([]);
 
+  // Manually-recorded trades (Phase 5).
+  const [tradeFormOpen, setTradeFormOpen] = useState(false);
+  const [tradeSide, setTradeSide] = useState("yes");
+  const [tradeEntryPrice, setTradeEntryPrice] = useState("");
+  const [tradeStake, setTradeStake] = useState("");
+  const [tradeNote, setTradeNote] = useState("");
+  const [savingTrade, setSavingTrade] = useState(false);
+  const [tradeError, setTradeError] = useState(null);
+  const [lastSavedTrade, setLastSavedTrade] = useState(null);
+
   const selectedAnalysis = analyses.find((a) => a.id === selectedAnalysisId) || null;
   const thread = selectedAnalysis ? buildThread(analyses, selectedAnalysis.id) : [];
 
@@ -65,6 +75,9 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
     setLastWasCached(false);
     setFollowUpText("");
     setFollowUpError(null);
+    setTradeFormOpen(false);
+    setTradeError(null);
+    setLastSavedTrade(null);
   }, [market.slug]);
 
   // Prompt templates don't depend on which market is selected — fetch once.
@@ -169,6 +182,51 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
     }
   };
 
+  const openTradeForm = () => {
+    setTradeSide("yes");
+    setTradeEntryPrice(market.current_price != null ? String(market.current_price) : "");
+    setTradeStake("");
+    setTradeNote("");
+    setTradeError(null);
+    setTradeFormOpen(true);
+  };
+
+  const selectTradeSide = (side) => {
+    setTradeSide(side);
+    const price = side === "yes" ? market.current_price : market.no_price;
+    setTradeEntryPrice(price != null ? String(price) : "");
+  };
+
+  const submitTrade = async () => {
+    const entryPrice = Number(tradeEntryPrice);
+    const stake = Number(tradeStake);
+    if (!Number.isFinite(entryPrice) || entryPrice <= 0 || entryPrice >= 1) {
+      setTradeError("Entry price must be between 0 and 1");
+      return;
+    }
+    if (!Number.isFinite(stake) || stake <= 0) {
+      setTradeError("Stake must be a positive number");
+      return;
+    }
+    setSavingTrade(true);
+    setTradeError(null);
+    try {
+      const trade = await api.createTrade({
+        marketSlug: market.slug,
+        side: tradeSide,
+        entryPrice,
+        stake,
+        note: tradeNote.trim() || undefined,
+      });
+      setLastSavedTrade(trade);
+      setTradeFormOpen(false);
+    } catch (err) {
+      setTradeError(err.message);
+    } finally {
+      setSavingTrade(false);
+    }
+  };
+
   return (
     <section className="detail">
       <h3>{market.question}</h3>
@@ -212,6 +270,67 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
           Stored range: {Number(market.min_price).toFixed(3)} – {Number(market.max_price).toFixed(3)}
         </p>
       )}
+
+      <div className="trade-section">
+        {!tradeFormOpen && (
+          <button className="btn btn-small" onClick={openTradeForm}>
+            Mark as traded
+          </button>
+        )}
+        {lastSavedTrade && !tradeFormOpen && (
+          <p className="settings-note">
+            Recorded {lastSavedTrade.side.toUpperCase()} @ {Number(lastSavedTrade.entry_price).toFixed(3)},
+            stake ${Number(lastSavedTrade.stake).toLocaleString()}.
+          </p>
+        )}
+
+        {tradeFormOpen && (
+          <div className="trade-form">
+            <div className="field-pair">
+              <select value={tradeSide} onChange={(e) => selectTradeSide(e.target.value)}>
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+              <input
+                type="number"
+                min={0}
+                max={1}
+                step={0.001}
+                placeholder="Entry price"
+                value={tradeEntryPrice}
+                onChange={(e) => setTradeEntryPrice(e.target.value)}
+              />
+              <input
+                type="number"
+                min={0}
+                step={0.01}
+                placeholder="Stake $"
+                value={tradeStake}
+                onChange={(e) => setTradeStake(e.target.value)}
+              />
+            </div>
+            <input
+              type="text"
+              placeholder="Note (optional)"
+              value={tradeNote}
+              onChange={(e) => setTradeNote(e.target.value)}
+            />
+            {tradeError && <p className="sync-error">{tradeError}</p>}
+            <div className="modal-actions">
+              <button className="btn btn-ghost btn-small" onClick={() => setTradeFormOpen(false)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-small"
+                onClick={submitTrade}
+                disabled={savingTrade || !tradeEntryPrice || !tradeStake}
+              >
+                {savingTrade ? "Saving…" : "Save trade"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
 
       {related.length > 0 && (
         <div className="related-markets">

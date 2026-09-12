@@ -36,6 +36,12 @@ import {
   createPromptTemplate,
   updatePromptTemplate,
   deletePromptTemplate,
+  createTrade,
+  getTrade,
+  listTrades,
+  listOpenTradeSlugs,
+  deleteTrade,
+  resolveTrade,
   DEFAULT_DB_PATH,
 } from "./db.js";
 import { fetchPriceHistory } from "./polymarket.js";
@@ -343,6 +349,76 @@ app.post("/api/settings/default-prompt-template", (req, res) => {
   res.status(200).json({ templateId: Number(templateId) });
 });
 
+// Phase 5: highlight markets whose implied probability (Yes price) is at or
+// above a configurable threshold — used by <MarketGrid>'s highlightThreshold
+// prop. Stored as a setting (percent, 0-100) so it survives restarts.
+const HIGHLIGHT_THRESHOLD_SETTING = "highlight_threshold_pct";
+const DEFAULT_HIGHLIGHT_THRESHOLD_PCT = 90;
+
+app.get("/api/settings/highlight-threshold", (req, res) => {
+  const stored = getSetting(getDb(DEFAULT_DB_PATH), HIGHLIGHT_THRESHOLD_SETTING);
+  res.json({ thresholdPct: stored != null ? Number(stored) : DEFAULT_HIGHLIGHT_THRESHOLD_PCT });
+});
+
+app.post("/api/settings/highlight-threshold", (req, res) => {
+  const { thresholdPct } = req.body || {};
+  const n = Number(thresholdPct);
+  if (!Number.isFinite(n) || n < 0 || n > 100) {
+    return res.status(400).json({ error: "thresholdPct must be a number between 0 and 100" });
+  }
+  setSetting(getDb(DEFAULT_DB_PATH), HIGHLIGHT_THRESHOLD_SETTING, String(n));
+  res.status(200).json({ thresholdPct: n });
+});
+
+// Phase 5: manually-recorded trades and their automatic resolution.
+app.get("/api/trades", (req, res) => {
+  const { status, marketSlug } = req.query;
+  res.json(listTrades(getDb(DEFAULT_DB_PATH), { status, marketSlug }));
+});
+
+app.post("/api/trades", (req, res) => {
+  const { marketSlug, side, entryPrice, stake, placedAt, note } = req.body || {};
+  if (!marketSlug || !["yes", "no"].includes(side)) {
+    return res.status(400).json({ error: "marketSlug and side ('yes' or 'no') are required" });
+  }
+  const price = Number(entryPrice);
+  const stakeAmount = Number(stake);
+  if (!Number.isFinite(price) || price <= 0 || price >= 1) {
+    return res.status(400).json({ error: "entryPrice must be a number between 0 and 1" });
+  }
+  if (!Number.isFinite(stakeAmount) || stakeAmount <= 0) {
+    return res.status(400).json({ error: "stake must be a positive number" });
+  }
+  const db = getDb(DEFAULT_DB_PATH);
+  if (!getMarket(db, marketSlug)) return res.status(404).json({ error: "Market not found" });
+  const trade = createTrade(db, {
+    marketSlug,
+    side,
+    entryPrice: price,
+    stake: stakeAmount,
+    placedAt: placedAt || undefined,
+    note: note || null,
+  });
+  res.status(201).json(trade);
+});
+
+app.delete("/api/trades/:id", (req, res) => {
+  deleteTrade(getDb(DEFAULT_DB_PATH), req.params.id);
+  res.status(204).end();
+});
+
+// Manually kicks the same resolution check the in-process scheduler runs
+// every SCHEDULE_POLL_MS — lets the UI get an immediate answer instead of
+// waiting for the next tick.
+app.post("/api/trades/check-resolutions", async (req, res) => {
+  try {
+    const result = await checkTradeResolutions();
+    res.status(200).json(result);
+  } catch (err) {
+    res.status(500).json({ error: String(err.message ?? err) });
+  }
+});
+
 app.get("/api/settings/deepseek-key", (req, res) => {
   res.json(deepseekKeyStatus());
 });
@@ -579,6 +655,46 @@ async function runDueScheduledSearches() {
 
 setInterval(() => {
   runDueScheduledSearches().catch((err) => console.error("Scheduled saved-search run failed:", err));
+}, SCHEDULE_POLL_MS);
+
+// Phase 5: automatic resolution-checking for open trades. A market is
+// treated as resolved once it's closed and its Yes price has snapped to
+// (near) 0 or 1, per how Polymarket's Gamma API represents a settled
+// outcome. Same in-process interval approach as the saved-search scheduler.
+async function checkTradeResolutions() {
+  const db = getDb(DEFAULT_DB_PATH);
+  const slugs = listOpenTradeSlugs(db);
+  if (slugs.length === 0) return { checked: 0, resolved: 0 };
+
+  try {
+    await refreshMarketPrices({ dbPath: DEFAULT_DB_PATH, slugs });
+  } catch {
+    // Best-effort refresh — fall back to whatever prices are already stored.
+  }
+
+  let resolved = 0;
+  for (const slug of slugs) {
+    const market = getMarket(db, slug);
+    if (!market || !market.closed || market.current_price == null) continue;
+
+    let winningSide = null;
+    if (market.current_price >= 0.99) winningSide = "yes";
+    else if (market.current_price <= 0.01) winningSide = "no";
+    if (!winningSide) continue; // closed but not cleanly settled to 0/1 yet
+
+    for (const trade of listTrades(db, { status: "open", marketSlug: slug })) {
+      const won = trade.side === winningSide;
+      const payout = won ? trade.stake / trade.entry_price : 0;
+      const profit = payout - trade.stake;
+      resolveTrade(db, trade.id, { status: won ? "won" : "lost", payout, profit });
+      resolved += 1;
+    }
+  }
+  return { checked: slugs.length, resolved };
+}
+
+setInterval(() => {
+  checkTradeResolutions().catch((err) => console.error("Trade resolution check failed:", err));
 }, SCHEDULE_POLL_MS);
 
 app.listen(PORT, () => {

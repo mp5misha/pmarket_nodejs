@@ -177,8 +177,10 @@ proxies `/api/*` requests to the Express server, so both need to be running.
   (off/15s/30s/1m/5m) re-polls what's stored in the database — it does not
   itself hit Polymarket on a timer; use **Run sync** or **Update selected
   prices** to actually pull fresh data. A resolved market shows a "Resolved"
-  badge instead of a last-updated time. Click any row to open its detail
-  panel below.
+  badge instead of a last-updated time. A **Highlight ≥ N%** field (Express/
+  SQLite only) tints any row whose implied Yes probability is at or above
+  that percentage — the value is saved server-side and persists across
+  restarts. Click any row to open its detail panel below.
 - **Bulk price update** — check one or more rows, then click **Update
   selected prices** to re-fetch just those markets' current price, volume,
   and liquidity from Polymarket without re-running a full sync. Any
@@ -186,9 +188,30 @@ proxies `/api/*` requests to the Express server, so both need to be running.
 - **Detail panel** — Yes/No price, volume, liquidity, resolution date, a
   **Related markets in this event** list (other markets sharing the same
   Polymarket event, e.g. other candidates in the same election — click one
-  to jump straight to it), a **Load price history chart** button, and an
-  **Analyze with DeepSeek** button (see below).
+  to jump straight to it), a **Load price history chart** button, a **Mark
+  as traded** action (see below), and an **Analyze with DeepSeek** button
+  (see below).
 - **Export CSV** in the sidebar downloads everything currently stored.
+
+## Trades and P&L (Express/SQLite only)
+
+Click **Mark as traded** on a market's detail panel to record a manual
+trade: side (Yes/No, pre-filling that side's current price as the entry
+price — editable), stake, and an optional note. The **My Trades** tab lists
+every recorded trade with tabs for All/Open/Won/Lost, a running net P&L
+total, and a **Check resolutions now** button.
+
+Trades resolve automatically: an in-process check (same interval approach
+as Market Discovery's scheduled reruns) runs every 60 seconds, refreshes
+the price/closed status of any market with an open trade, and — once that
+market is closed and its Yes price has settled to (near) 0 or 1, matching
+how Polymarket represents a final outcome — marks each open trade **Won**
+or **Lost** based on which side actually won. **Check resolutions now**
+runs the same check immediately instead of waiting for the next tick.
+
+P&L uses the same buy-side formula as the profitability tracking in a later
+section: for a stake `s` at entry price `p`, `payout = s / p` if the trade's
+side won, else `0`; `profit = payout - s`.
 
 ## Market Discovery (Express/SQLite only)
 

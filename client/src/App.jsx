@@ -5,6 +5,7 @@ import MarketGrid from "./components/MarketGrid.jsx";
 import MarketDetail from "./components/MarketDetail.jsx";
 import SettingsModal from "./components/SettingsModal.jsx";
 import MarketDiscovery from "./components/MarketDiscovery.jsx";
+import MyTrades from "./components/MyTrades.jsx";
 import { useMarketGroups } from "./hooks/useMarketGroups.js";
 import { useCatalogFetch } from "./hooks/useCatalogFetch.js";
 
@@ -55,6 +56,7 @@ export default function App() {
   const [deepseekStatus, setDeepseekStatus] = useState(null);
   const [view, setView] = useState("markets");
   const { syncStatus, run: runCatalogFetch } = useCatalogFetch();
+  const [highlightThresholdPct, setHighlightThresholdPct] = useState(null);
 
   const refreshStats = async () => {
     try {
@@ -85,8 +87,21 @@ export default function App() {
     refreshStats();
     refreshTags();
     refreshDeepseekStatus();
+    api
+      .getHighlightThreshold()
+      .then((r) => setHighlightThresholdPct(r.thresholdPct))
+      .catch(() => setHighlightThresholdPct(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const updateHighlightThreshold = async (pct) => {
+    setHighlightThresholdPct(pct);
+    try {
+      await api.setHighlightThreshold(pct);
+    } catch {
+      /* non-fatal — the grid still highlights using the locally-set value */
+    }
+  };
 
   // Any filter (or page size) change jumps back to page 1 — useMarketGroups
   // re-fetches on its own whenever any of these (or page) change.
@@ -199,10 +214,18 @@ export default function App() {
           >
             Market Discovery
           </button>
+          <button
+            className={`view-tab ${view === "trades" ? "active" : ""}`}
+            onClick={() => setView("trades")}
+          >
+            My Trades
+          </button>
         </div>
 
         {view === "discovery" ? (
           <MarketDiscovery tags={tags} />
+        ) : view === "trades" ? (
+          <MyTrades />
         ) : (
           <>
             <h2>Polymarket Markets</h2>
@@ -251,6 +274,20 @@ export default function App() {
                 value={maxPrice}
                 onChange={(e) => setMaxPrice(e.target.value === "" ? "" : Number(e.target.value))}
               />
+              {highlightThresholdPct != null && (
+                <label className="highlight-threshold-field" title="Highlight markets at or above this implied Yes probability">
+                  Highlight ≥
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={highlightThresholdPct}
+                    onChange={(e) => updateHighlightThreshold(Number(e.target.value))}
+                  />
+                  %
+                </label>
+              )}
             </div>
 
             {refreshError && <p className="sync-error">{refreshError}</p>}
@@ -292,6 +329,7 @@ export default function App() {
                   selectedSlugs={selectedSlugs}
                   onToggleSelect={toggleSelectMarket}
                   onToggleSelectAll={toggleSelectAllMarkets}
+                  highlightThreshold={highlightThresholdPct != null ? highlightThresholdPct / 100 : null}
                 />
               </>
             )}
