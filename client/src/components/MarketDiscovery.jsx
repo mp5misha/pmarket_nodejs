@@ -106,7 +106,12 @@ export default function MarketDiscovery({ tags }) {
       setScheduleMinutes("");
       refreshSavedSearches();
     } catch (err) {
-      setSaveError(err.message);
+      if (err.status === 404) {
+        setSavedSearchesUnavailable(true);
+        setSaveError("Saved searches aren't available on this deploy target yet.");
+      } else {
+        setSaveError(err.message);
+      }
     }
   };
 
@@ -247,7 +252,12 @@ export default function MarketDiscovery({ tags }) {
           >
             {syncStatus.running && activeRun === "adhoc" ? "Fetching…" : "Fetch now"}
           </button>
-          <button className="btn btn-ghost" disabled={syncStatus.running} onClick={handleSave}>
+          <button
+            className="btn btn-ghost"
+            disabled={syncStatus.running || savedSearchesUnavailable}
+            title={savedSearchesUnavailable ? "Saved searches aren't available on this deploy target yet." : undefined}
+            onClick={handleSave}
+          >
             Save search
           </button>
         </div>

@@ -39,6 +39,7 @@ export default function MyTrades() {
   const [trades, setTrades] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [tradesUnavailable, setTradesUnavailable] = useState(false);
   const [checking, setChecking] = useState(false);
   const [checkNote, setCheckNote] = useState(null);
 
@@ -57,8 +58,13 @@ export default function MyTrades() {
     setError(null);
     try {
       setTrades(await api.listTrades({ status: status || undefined }));
+      setTradesUnavailable(false);
     } catch (err) {
-      setError(err.message);
+      if (err.status === 404) {
+        setTradesUnavailable(true);
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -351,6 +357,8 @@ export default function MyTrades() {
 
       {loading ? (
         <p className="discovery-note">Loading…</p>
+      ) : tradesUnavailable ? (
+        <p className="discovery-note">Trade tracking isn't available on this deploy target yet.</p>
       ) : trades.length === 0 ? (
         <div className="empty-state">
           No trades recorded yet. Use <strong>Mark as traded</strong> on a market's detail panel.
