@@ -1,6 +1,16 @@
 import { useState } from "react";
 
-export default function Sidebar({ stats, syncStatus, tags, deepseekStatus, onSync, onExport, onOpenSettings }) {
+export default function Sidebar({
+  stats,
+  syncStatus,
+  tags,
+  deepseekStatus,
+  onSync,
+  onExport,
+  onOpenSettings,
+  user,
+  onLogout,
+}) {
   const [limit, setLimit] = useState(500);
   const [status, setStatus] = useState("active");
   const [tag, setTag] = useState("");
@@ -36,6 +46,15 @@ export default function Sidebar({ stats, syncStatus, tags, deepseekStatus, onSyn
         {stats.count} markets stored
         {stats.lastUpdated && <> · updated {new Date(stats.lastUpdated).toLocaleString()}</>}
       </div>
+
+      {user && (
+        <div className="account-line">
+          <span title={user.email}>{user.email}</span>
+          <button className="link-button" onClick={onLogout}>
+            Log out
+          </button>
+        </div>
+      )}
 
       <div className="sync-panel">
         <div className="field">

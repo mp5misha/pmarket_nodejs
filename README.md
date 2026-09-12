@@ -32,6 +32,14 @@ The sync also works differently here — see **How sync works on Vercel**
 below — because a single serverless function can't run for several minutes
 the way the old click-and-wait sync did.
 
+**This deploy predates accounts and has no login** — it's frozen at the
+feature set from before Phase 8 (Market Discovery, AI analysis history,
+trades/bankroll, and everything else built on `server/` since then aren't
+here either). The shared client detects a backend with no `/api/auth/*`
+routes and skips the login screen entirely rather than showing one with
+nowhere for it to lead. For every feature built since Phase 1, deploy
+`server/` instead (see the two options below).
+
 **1. Provision a free Postgres database (Neon, via Vercel's own integration):**
 - In your Vercel project → **Storage** tab → **Create Database** → **Neon**
   (Postgres). Follow the prompts; it's free at this scale.
@@ -75,6 +83,11 @@ service on Render/Railway handles the API.
   `server`**, build command `npm install`, start command `npm start`.
 - Add a persistent disk mounted in `server/` if you want `polymarket.db` to
   survive redeploys.
+- Set the `SMTP_*` and `APP_BASE_URL` environment variables (see
+  `server/.env.example`) — required for account verification/2FA/reset
+  emails to actually reach anyone once this isn't running on your machine.
+  Since the client is on a different origin here, also set
+  `COOKIE_SAMESITE=none` (requires HTTPS, which Render/Railway provide).
 - Note the URL Render gives you, e.g. `https://polymarket-tracker-api.onrender.com`.
 
 **2. Deploy the client to Vercel:**
@@ -116,8 +129,15 @@ service on Render/Railway handles the API.
    you want `polymarket.db` to survive redeploys — otherwise each deploy
    starts from an empty database.
 
-Either way, once it's up: open the URL, click **Run sync** in the sidebar,
-and you're browsing live Polymarket data in the deployed app.
+Either way, once it's up: open the URL, create an account (see "Accounts and
+authentication" below), click **Run sync** in the sidebar, and you're
+browsing live Polymarket data in the deployed app.
+
+**On any real deploy**, set the `SMTP_*` environment variables (see
+`server/.env.example`) in the platform's environment variable settings —
+without them, verification/2FA/reset emails are only logged to the server's
+own console, which you can't read once it's not your local machine. Also
+set `APP_BASE_URL` to the deployed URL so email links point somewhere real.
 
 ## Local setup instead
 
@@ -139,10 +159,12 @@ nvm use 22
 ```bash
 cd server
 npm install
+cp .env.example .env   # then fill in real values — see "Accounts and authentication" below
 npm start
 ```
 This listens on `http://localhost:3001` and creates `server/polymarket.db`
-(SQLite) on first run.
+(SQLite) on first run. `.env` is gitignored — never commit real secrets;
+`.env.example` documents the variable names.
 
 **Terminal 2 — start the UI:**
 ```bash
@@ -152,6 +174,63 @@ npm run dev
 ```
 Open the URL it prints (typically `http://localhost:5173`). The dev server
 proxies `/api/*` requests to the Express server, so both need to be running.
+
+## Accounts and authentication (Express/SQLite only)
+
+The app requires an account: on first load you'll see **Log in** / **Create
+an account** instead of the market grid. This is Express/SQLite only — the
+frozen Vercel deploy predates accounts and has no login screen (see
+"Migrating existing single-tenant data" below for what that means if you're
+moving from one to the other).
+
+**Registration → verification → login:**
+1. **Create an account** with an email and password (min. 8 characters,
+   hashed with bcrypt — the plaintext password is never stored). You're
+   sent a verification email; the account can't log in until it's clicked.
+2. **Log in** with email + password. A correct password doesn't sign you in
+   immediately — it triggers a **6-digit code emailed to you**, valid for
+   10 minutes, capped at 5 incorrect attempts before you have to log in
+   again. Check **Remember this device for 30 days** to skip this step on
+   future logins from the same browser.
+3. **Forgot your password?** sends a reset link (valid 1 hour) if that
+   email is registered — the response is identical either way, so the flow
+   can't be used to check which emails have accounts. Resetting logs you
+   out everywhere (every session is invalidated), not just on your current
+   device.
+
+**Session management: an httpOnly cookie backed by a database table**,
+chosen over JWT because this app is a single Express process backed by one
+SQLite file — there's no second service that needs to verify a token
+independently, which is JWT's main advantage. A cookie session can be
+revoked instantly (logout, or a password reset invalidating every session)
+by deleting its row; a bare JWT can't be revoked before it naturally expires
+without adding a blocklist anyway, which gives up the "stateless" benefit
+that's the usual reason to reach for JWT in the first place. The cookie
+itself holds a random opaque token — only its SHA-256 hash is stored server-
+side, the same pattern used for every other single-use token here (email
+verification, password reset, 2FA codes).
+
+**Email provider — pluggable via environment variables**, not hardcoded to
+any service: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` (any
+SMTP-compatible provider works; `MAIL_FROM` defaults to `SMTP_USER`). See
+`server/.env.example` for the full list, including `APP_BASE_URL` (used to
+build the links inside verification/reset emails). Leave `SMTP_*` unset in
+local dev to have emails logged to the server console instead of actually
+sent, so you can develop the auth flow without setting up a real mail
+provider — grab the link/code from the terminal output.
+
+**Migrating existing single-tenant data:** every user-owned table (saved
+searches, fetch runs, AI analyses, prompt templates, trades, the bankroll
+ledger, and settings) now carries a `user_id` — the shared `markets` catalog
+itself does not, since it mirrors Polymarket's public data and is the same
+for everyone regardless of account. If this database had data in it from
+before accounts existed, migration 008 attaches all of it to a placeholder
+"legacy" account (`legacy@local.invalid`, an address on a TLD reserved by
+RFC 2606 so it can never receive real mail or collide with a signup) with an
+unusable random password hash — nobody can log into it. After creating your
+own account, **⚙ Settings → Account → Claim legacy data** reassigns
+everything that account owns to you; it's safe to click more than once
+(a no-op once there's nothing left to claim).
 
 ## Using it
 

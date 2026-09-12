@@ -119,6 +119,21 @@ button {
   padding-top: 14px;
 }
 
+.account-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--sidebar-muted);
+}
+
+.account-line span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .sync-panel {
   display: flex;
   flex-direction: column;
@@ -1154,4 +1169,87 @@ table.ledger tbody tr.highlighted-row:hover {
   font-family: var(--font-mono, monospace);
   font-size: 11.5px;
   color: var(--ink-soft);
+}
+
+/* Auth screens (Phase 8) — login/register/2FA/forgot/reset, and the
+ * verify-email/reset-password email-link landing pages. */
+.auth-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--paper);
+  padding: 24px;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 28px 28px 24px;
+}
+
+.auth-card h1 {
+  font-family: var(--font-serif);
+  font-size: 19px;
+  margin: 0 0 20px;
+  text-align: center;
+}
+
+.auth-card h2 {
+  font-family: var(--font-serif);
+  font-size: 16px;
+  margin: 0 0 14px;
+}
+
+.auth-card form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.auth-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.auth-card label.field-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.auth-card input[type="email"],
+.auth-card input[type="password"],
+.auth-card input[type="text"] {
+  border: 1px solid var(--rule);
+  background: #fff;
+  border-radius: 4px;
+  padding: 9px 10px;
+  font-size: 13.5px;
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+
+.auth-hint {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  margin: 0 0 6px;
+}
+
+.auth-links {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.auth-links .link-button {
+  font-size: 12.5px;
 }

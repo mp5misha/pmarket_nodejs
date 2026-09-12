@@ -13,47 +13,55 @@ async function handle(res) {
   return res.json();
 }
 
+// Every API call goes through here so the session cookie (Phase 8 auth) is
+// always sent — required even for same-origin requests in some browser
+// configurations, and essential for a cross-origin split deploy (client and
+// API on different hosts).
+function req(url, options) {
+  return fetch(url, { ...options, credentials: "include" });
+}
+
 export const api = {
-  stats: () => fetch(`${BASE}/stats`).then(handle),
+  stats: () => req(`${BASE}/stats`).then(handle),
   markets: (params = {}) => {
     const qs = new URLSearchParams(
       Object.entries(params).filter(([, v]) => v !== undefined && v !== "" && v !== null)
     ).toString();
-    return fetch(`${BASE}/markets${qs ? `?${qs}` : ""}`).then(handle);
+    return req(`${BASE}/markets${qs ? `?${qs}` : ""}`).then(handle);
   },
-  market: (slug) => fetch(`${BASE}/markets/${encodeURIComponent(slug)}`).then(handle),
+  market: (slug) => req(`${BASE}/markets/${encodeURIComponent(slug)}`).then(handle),
   // Same filters as markets(), but grouped by Polymarket event and paginated
   // over groups instead of raw rows — powers <MarketGrid>.
   groupedMarkets: (params = {}) => {
     const qs = new URLSearchParams(
       Object.entries(params).filter(([, v]) => v !== undefined && v !== "" && v !== null)
     ).toString();
-    return fetch(`${BASE}/markets/grouped${qs ? `?${qs}` : ""}`).then(handle);
+    return req(`${BASE}/markets/grouped${qs ? `?${qs}` : ""}`).then(handle);
   },
   history: (slug, interval = "max") =>
-    fetch(`${BASE}/markets/${encodeURIComponent(slug)}/history?interval=${interval}`).then(handle),
+    req(`${BASE}/markets/${encodeURIComponent(slug)}/history?interval=${interval}`).then(handle),
   // Sibling markets under the same Polymarket event (e.g. other candidates
   // in the same election), for the detail panel's "related markets" list.
-  related: (slug) => fetch(`${BASE}/markets/${encodeURIComponent(slug)}/related`).then(handle),
-  tags: () => fetch(`${BASE}/tags`).then(handle),
+  related: (slug) => req(`${BASE}/markets/${encodeURIComponent(slug)}/related`).then(handle),
+  tags: () => req(`${BASE}/tags`).then(handle),
   // Asks DeepSeek to analyze one market's real probability and background —
   // can take a while (up to a minute or so), so no client-side timeout here.
   // Without force, a completed analysis with identical inputs (market +
   // prompt + model + reasoning effort) is served from history instead of
   // billing DeepSeek again; force: true always creates a new record.
   analyzeMarket: (slug, { force = false, templateId } = {}) =>
-    fetch(`${BASE}/markets/${encodeURIComponent(slug)}/analyze`, {
+    req(`${BASE}/markets/${encodeURIComponent(slug)}/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ force, templateId }),
     }).then(handle),
   // Full history of past analyses for one market (Phase 3), newest first.
-  listAnalyses: (slug) => fetch(`${BASE}/markets/${encodeURIComponent(slug)}/analyses`).then(handle),
-  getAnalysis: (id) => fetch(`${BASE}/analyses/${id}`).then(handle),
+  listAnalyses: (slug) => req(`${BASE}/markets/${encodeURIComponent(slug)}/analyses`).then(handle),
+  getAnalysis: (id) => req(`${BASE}/analyses/${id}`).then(handle),
   // Follow-up prompts layered on a stored analysis (Phase 4) — DeepSeek gets
   // the whole reconstructed thread as context, always creates a new record.
   followUpAnalysis: (id, text) =>
-    fetch(`${BASE}/analyses/${id}/follow-up`, {
+    req(`${BASE}/analyses/${id}/follow-up`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
@@ -61,26 +69,26 @@ export const api = {
   // Reusable prompt templates (Phase 4). Express/SQLite only — callers
   // should treat rejection as "feature unavailable here", same as
   // saved searches/fetch runs.
-  listPromptTemplates: () => fetch(`${BASE}/prompt-templates`).then(handle),
+  listPromptTemplates: () => req(`${BASE}/prompt-templates`).then(handle),
   createPromptTemplate: (params) =>
-    fetch(`${BASE}/prompt-templates`, {
+    req(`${BASE}/prompt-templates`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
     }).then(handle),
   updatePromptTemplate: (id, params) =>
-    fetch(`${BASE}/prompt-templates/${id}`, {
+    req(`${BASE}/prompt-templates/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
     }).then(handle),
   deletePromptTemplate: (id) =>
-    fetch(`${BASE}/prompt-templates/${id}`, { method: "DELETE" }).then((res) => {
+    req(`${BASE}/prompt-templates/${id}`, { method: "DELETE" }).then((res) => {
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
     }),
-  getDefaultPromptTemplate: () => fetch(`${BASE}/settings/default-prompt-template`).then(handle),
+  getDefaultPromptTemplate: () => req(`${BASE}/settings/default-prompt-template`).then(handle),
   setDefaultPromptTemplate: (templateId) =>
-    fetch(`${BASE}/settings/default-prompt-template`, {
+    req(`${BASE}/settings/default-prompt-template`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ templateId }),
@@ -89,7 +97,7 @@ export const api = {
   // Polymarket, in place of a full sync — used by the table's "Update
   // selected" action.
   refreshMarkets: (slugs) =>
-    fetch(`${BASE}/markets/refresh`, {
+    req(`${BASE}/markets/refresh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ slugs }),
@@ -98,7 +106,7 @@ export const api = {
   // until `done` comes back true. Same contract on both deploy targets
   // (Express /api/sync/step and the Vercel function of the same name).
   syncStep: (opts) =>
-    fetch(`${BASE}/sync/step`, {
+    req(`${BASE}/sync/step`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(opts),
@@ -107,31 +115,31 @@ export const api = {
   // Settings: the DeepSeek API key, configurable from the app itself instead
   // of only via the DEEPSEEK_API_KEY environment variable. The key itself is
   // never sent back — only whether one is set and where it came from.
-  getDeepSeekKeyStatus: () => fetch(`${BASE}/settings/deepseek-key`).then(handle),
+  getDeepSeekKeyStatus: () => req(`${BASE}/settings/deepseek-key`).then(handle),
   setDeepSeekKey: (apiKey) =>
-    fetch(`${BASE}/settings/deepseek-key`, {
+    req(`${BASE}/settings/deepseek-key`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ apiKey }),
     }).then(handle),
   clearDeepSeekKey: () =>
-    fetch(`${BASE}/settings/deepseek-key`, { method: "DELETE" }).then(handle),
+    req(`${BASE}/settings/deepseek-key`, { method: "DELETE" }).then(handle),
   // The DeepSeek analysis prompt template — user-editable, supports
   // {slug}/{yes_price}/{no_price}/{end_date}/{liquidity} placeholders.
-  getPromptTemplate: () => fetch(`${BASE}/settings/deepseek-prompt`).then(handle),
+  getPromptTemplate: () => req(`${BASE}/settings/deepseek-prompt`).then(handle),
   setPromptTemplate: (template) =>
-    fetch(`${BASE}/settings/deepseek-prompt`, {
+    req(`${BASE}/settings/deepseek-prompt`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ template }),
     }).then(handle),
   resetPromptTemplate: () =>
-    fetch(`${BASE}/settings/deepseek-prompt`, { method: "DELETE" }).then(handle),
+    req(`${BASE}/settings/deepseek-prompt`, { method: "DELETE" }).then(handle),
   // DeepSeek model + reasoning effort (Phase 3): deepseek-flash/deepseek-v4-pro,
   // non-thinking/thinking/thinking (max).
-  getDeepSeekModelStatus: () => fetch(`${BASE}/settings/deepseek-model`).then(handle),
+  getDeepSeekModelStatus: () => req(`${BASE}/settings/deepseek-model`).then(handle),
   setDeepSeekModelStatus: (params) =>
-    fetch(`${BASE}/settings/deepseek-model`, {
+    req(`${BASE}/settings/deepseek-model`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
@@ -141,37 +149,37 @@ export const api = {
   // trail of catalog fetches. Not available on the frozen Vercel deploy
   // yet — callers should treat rejection as "feature unavailable here"
   // rather than a hard failure.
-  listSavedSearches: () => fetch(`${BASE}/saved-searches`).then(handle),
+  listSavedSearches: () => req(`${BASE}/saved-searches`).then(handle),
   createSavedSearch: (params) =>
-    fetch(`${BASE}/saved-searches`, {
+    req(`${BASE}/saved-searches`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
     }).then(handle),
   updateSavedSearch: (id, params) =>
-    fetch(`${BASE}/saved-searches/${id}`, {
+    req(`${BASE}/saved-searches/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
     }).then(handle),
   deleteSavedSearch: (id) =>
-    fetch(`${BASE}/saved-searches/${id}`, { method: "DELETE" }).then((res) => {
+    req(`${BASE}/saved-searches/${id}`, { method: "DELETE" }).then((res) => {
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
     }),
   listFetchRuns: (params = {}) => {
     const qs = new URLSearchParams(
       Object.entries(params).filter(([, v]) => v !== undefined && v !== "" && v !== null)
     ).toString();
-    return fetch(`${BASE}/fetch-runs${qs ? `?${qs}` : ""}`).then(handle);
+    return req(`${BASE}/fetch-runs${qs ? `?${qs}` : ""}`).then(handle);
   },
   createFetchRun: (params) =>
-    fetch(`${BASE}/fetch-runs`, {
+    req(`${BASE}/fetch-runs`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
     }).then(handle),
   completeFetchRun: (id, params) =>
-    fetch(`${BASE}/fetch-runs/${id}/complete`, {
+    req(`${BASE}/fetch-runs/${id}/complete`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
@@ -179,9 +187,9 @@ export const api = {
 
   // Highlight threshold (Phase 5) — markets with implied Yes probability at
   // or above this percentage are highlighted in the grid.
-  getHighlightThreshold: () => fetch(`${BASE}/settings/highlight-threshold`).then(handle),
+  getHighlightThreshold: () => req(`${BASE}/settings/highlight-threshold`).then(handle),
   setHighlightThreshold: (thresholdPct) =>
-    fetch(`${BASE}/settings/highlight-threshold`, {
+    req(`${BASE}/settings/highlight-threshold`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ thresholdPct }),
@@ -193,46 +201,106 @@ export const api = {
     const qs = new URLSearchParams(
       Object.entries(params).filter(([, v]) => v !== undefined && v !== "" && v !== null)
     ).toString();
-    return fetch(`${BASE}/trades${qs ? `?${qs}` : ""}`).then(handle);
+    return req(`${BASE}/trades${qs ? `?${qs}` : ""}`).then(handle);
   },
   createTrade: (params) =>
-    fetch(`${BASE}/trades`, {
+    req(`${BASE}/trades`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
     }).then(handle),
   deleteTrade: (id) =>
-    fetch(`${BASE}/trades/${id}`, { method: "DELETE" }).then((res) => {
+    req(`${BASE}/trades/${id}`, { method: "DELETE" }).then((res) => {
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
     }),
-  checkTradeResolutions: () => fetch(`${BASE}/trades/check-resolutions`, { method: "POST" }).then(handle),
+  checkTradeResolutions: () => req(`${BASE}/trades/check-resolutions`, { method: "POST" }).then(handle),
 
   // Bet-sizing configuration (Phase 6) — Kelly fraction, flat stake, fixed
   // percentage. The response's `bankrollAmount` is the live bankroll
   // balance (Phase 7's ledger-backed figure) — set the starting amount via
   // getBankroll/setBankroll instead of here.
-  getBetSizing: () => fetch(`${BASE}/settings/bet-sizing`).then(handle),
+  getBetSizing: () => req(`${BASE}/settings/bet-sizing`).then(handle),
   setBetSizing: (params) =>
-    fetch(`${BASE}/settings/bet-sizing`, {
+    req(`${BASE}/settings/bet-sizing`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
     }).then(handle),
 
   // Bankroll settings, dashboard, and ledger (Phase 7).
-  getBankroll: () => fetch(`${BASE}/settings/bankroll`).then(handle),
+  getBankroll: () => req(`${BASE}/settings/bankroll`).then(handle),
   setBankroll: (params) =>
-    fetch(`${BASE}/settings/bankroll`, {
+    req(`${BASE}/settings/bankroll`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
     }).then(handle),
-  getBankrollDashboard: () => fetch(`${BASE}/bankroll/dashboard`).then(handle),
-  listBankrollLedger: (limit) => fetch(`${BASE}/bankroll/ledger${limit ? `?limit=${limit}` : ""}`).then(handle),
+  getBankrollDashboard: () => req(`${BASE}/bankroll/dashboard`).then(handle),
+  listBankrollLedger: (limit) => req(`${BASE}/bankroll/ledger${limit ? `?limit=${limit}` : ""}`).then(handle),
   addLedgerEntry: (params) =>
-    fetch(`${BASE}/bankroll/ledger`, {
+    req(`${BASE}/bankroll/ledger`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
     }).then(handle),
+
+  // Auth (Phase 8) — session cookie is set/cleared by the server itself on
+  // login/2fa-verify/logout; nothing here touches document.cookie directly.
+  register: (email, password) =>
+    req(`${BASE}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    }).then(handle),
+  resendVerification: (email) =>
+    req(`${BASE}/auth/resend-verification`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    }).then(handle),
+  verifyEmail: (token) =>
+    req(`${BASE}/auth/verify-email`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    }).then(handle),
+  login: (email, password) =>
+    req(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    }).then(handle),
+  verify2fa: (pendingToken, code, rememberDevice) =>
+    req(`${BASE}/auth/2fa/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pendingToken, code, rememberDevice }),
+    }).then(handle),
+  logout: () => req(`${BASE}/auth/logout`, { method: "POST" }).then(handle),
+  // A 404 here means this backend has no auth support at all (the frozen
+  // Vercel deploy, which predates accounts) — distinct from a real 200
+  // {user: null} meaning "supported, just not logged in". App.jsx uses this
+  // to skip the auth gate entirely on Vercel instead of showing a login
+  // screen with no working login endpoint behind it.
+  me: async () => {
+    const res = await req(`${BASE}/auth/me`);
+    if (res.status === 404) return { user: null, authSupported: false };
+    return { ...(await handle(res)), authSupported: true };
+  },
+  forgotPassword: (email) =>
+    req(`${BASE}/auth/forgot-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    }).then(handle),
+  resetPassword: (token, newPassword) =>
+    req(`${BASE}/auth/reset-password`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token, newPassword }),
+    }).then(handle),
+  // Migration path for pre-Phase-8 data (see server migration 008) — call
+  // once after logging in to inherit whatever the placeholder legacy
+  // account owned.
+  claimLegacyData: () => req(`${BASE}/auth/claim-legacy-data`, { method: "POST" }).then(handle),
 };

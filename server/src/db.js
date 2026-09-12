@@ -53,7 +53,10 @@ ON CONFLICT(slug) DO UPDATE SET
   last_updated=excluded.last_updated
 `;
 
-/** market is the normalized shape from polymarket.js (normalizeMarket). */
+/** market is the normalized shape from polymarket.js (normalizeMarket).
+ * The markets catalog is shared across every account (it mirrors
+ * Polymarket's own public data), so unlike everything below it carries no
+ * user_id. */
 export function upsertMarket(db, market, { minPrice = null, maxPrice = null } = {}) {
   db.prepare(UPSERT_SQL).run({
     slug: market.slug,
@@ -229,42 +232,228 @@ export function getAllForExport(db) {
   return db.prepare("SELECT * FROM markets ORDER BY volume DESC NULLS LAST").all();
 }
 
-/** Small generic key/value store — currently used to let the app's settings
- * window save the DeepSeek API key without an environment variable. */
-export function getSetting(db, key) {
-  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
+// ---------------------------------------------------------------------------
+// Auth (Phase 8) — users, sessions, and the various single-use tokens/codes.
+// ---------------------------------------------------------------------------
+
+export function createUser(db, { email, passwordHash }) {
+  const now = new Date().toISOString();
+  const result = db
+    .prepare(
+      `INSERT INTO users (email, password_hash, email_verified, created_at, updated_at)
+       VALUES (?, ?, 0, ?, ?)`
+    )
+    .run(email.toLowerCase(), passwordHash, now, now);
+  return getUserById(db, result.lastInsertRowid);
+}
+
+export function getUserById(db, id) {
+  return db.prepare("SELECT * FROM users WHERE id = ?").get(id);
+}
+
+export function getUserByEmail(db, email) {
+  return db.prepare("SELECT * FROM users WHERE email = ?").get(email.toLowerCase());
+}
+
+export function markEmailVerified(db, userId) {
+  db.prepare("UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?").run(
+    new Date().toISOString(),
+    userId
+  );
+}
+
+export function updateUserPassword(db, userId, passwordHash) {
+  db.prepare("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?").run(
+    passwordHash,
+    new Date().toISOString(),
+    userId
+  );
+}
+
+export function createSession(db, { userId, tokenHash, expiresAt }) {
+  const now = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO sessions (token_hash, user_id, expires_at, created_at, last_seen_at)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(tokenHash, userId, expiresAt, now, now);
+}
+
+/** Returns the session row joined with its user, or undefined if the token
+ * doesn't exist or has expired (expired rows are lazily swept here). */
+export function getSessionByTokenHash(db, tokenHash) {
+  const row = db
+    .prepare(
+      `SELECT sessions.*, users.email, users.email_verified
+       FROM sessions JOIN users ON users.id = sessions.user_id
+       WHERE sessions.token_hash = ?`
+    )
+    .get(tokenHash);
+  if (!row) return undefined;
+  if (new Date(row.expires_at).getTime() <= Date.now()) {
+    db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(tokenHash);
+    return undefined;
+  }
+  db.prepare("UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?").run(
+    new Date().toISOString(),
+    tokenHash
+  );
+  return row;
+}
+
+export function deleteSession(db, tokenHash) {
+  db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(tokenHash);
+}
+
+export function deleteAllSessionsForUser(db, userId) {
+  db.prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
+}
+
+export function createEmailVerificationToken(db, { userId, tokenHash, expiresAt }) {
+  db.prepare(
+    `INSERT INTO email_verification_tokens (user_id, token_hash, expires_at, created_at)
+     VALUES (?, ?, ?, ?)`
+  ).run(userId, tokenHash, expiresAt, new Date().toISOString());
+}
+
+/** Consumes a verification token if valid (unused, unexpired) — returns the
+ * owning user_id, or null. Single-use: marks it used_at in the same call. */
+export function consumeEmailVerificationToken(db, tokenHash) {
+  const row = db
+    .prepare(
+      "SELECT * FROM email_verification_tokens WHERE token_hash = ? AND used_at IS NULL"
+    )
+    .get(tokenHash);
+  if (!row || new Date(row.expires_at).getTime() <= Date.now()) return null;
+  db.prepare("UPDATE email_verification_tokens SET used_at = ? WHERE id = ?").run(
+    new Date().toISOString(),
+    row.id
+  );
+  return row.user_id;
+}
+
+export function createPasswordResetToken(db, { userId, tokenHash, expiresAt }) {
+  db.prepare(
+    `INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, created_at)
+     VALUES (?, ?, ?, ?)`
+  ).run(userId, tokenHash, expiresAt, new Date().toISOString());
+}
+
+export function consumePasswordResetToken(db, tokenHash) {
+  const row = db
+    .prepare("SELECT * FROM password_reset_tokens WHERE token_hash = ? AND used_at IS NULL")
+    .get(tokenHash);
+  if (!row || new Date(row.expires_at).getTime() <= Date.now()) return null;
+  db.prepare("UPDATE password_reset_tokens SET used_at = ? WHERE id = ?").run(
+    new Date().toISOString(),
+    row.id
+  );
+  return row.user_id;
+}
+
+export function createTwoFactorCode(db, { userId, codeHash, pendingTokenHash, expiresAt }) {
+  db.prepare(
+    `INSERT INTO two_factor_codes (user_id, code_hash, pending_token_hash, expires_at, created_at)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(userId, codeHash, pendingTokenHash, expiresAt, new Date().toISOString());
+}
+
+export function getActiveTwoFactorCode(db, pendingTokenHash) {
+  return db
+    .prepare(
+      "SELECT * FROM two_factor_codes WHERE pending_token_hash = ? AND used_at IS NULL ORDER BY created_at DESC LIMIT 1"
+    )
+    .get(pendingTokenHash);
+}
+
+export function incrementTwoFactorAttempts(db, id) {
+  db.prepare("UPDATE two_factor_codes SET attempts = attempts + 1 WHERE id = ?").run(id);
+}
+
+export function markTwoFactorCodeUsed(db, id) {
+  db.prepare("UPDATE two_factor_codes SET used_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+}
+
+export function createRememberedDevice(db, { userId, tokenHash, expiresAt }) {
+  db.prepare(
+    `INSERT INTO remembered_devices (user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?)`
+  ).run(userId, tokenHash, expiresAt, new Date().toISOString());
+}
+
+/** Returns the owning user_id if this device token is a still-valid
+ * "remember this device" grant, else null — used to skip the 2FA prompt. */
+export function checkRememberedDevice(db, tokenHash) {
+  const row = db
+    .prepare("SELECT * FROM remembered_devices WHERE token_hash = ?")
+    .get(tokenHash);
+  if (!row || new Date(row.expires_at).getTime() <= Date.now()) return null;
+  return row.user_id;
+}
+
+/** Reassigns every row currently owned by the placeholder legacy account
+ * (see migration 008) to `newUserId` — the migration path a real user takes
+ * to inherit this app's pre-auth single-tenant data. No-op (returns false)
+ * if there's no legacy account, e.g. a fresh install that never had any
+ * pre-existing data. */
+export function claimLegacyData(db, newUserId) {
+  const legacy = getUserByEmail(db, "legacy@local.invalid");
+  if (!legacy || legacy.id === newUserId) return false;
+
+  const ownedTables = ["saved_searches", "fetch_runs", "ai_analysis", "prompt_templates", "trades", "bankroll_ledger"];
+  const claim = db.transaction(() => {
+    for (const table of ownedTables) {
+      db.prepare(`UPDATE ${table} SET user_id = ? WHERE user_id = ?`).run(newUserId, legacy.id);
+    }
+    for (const row of db.prepare("SELECT key, value FROM user_settings WHERE user_id = ?").all(legacy.id)) {
+      db.prepare(
+        `INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)
+         ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`
+      ).run(newUserId, row.key, row.value);
+    }
+    db.prepare("DELETE FROM user_settings WHERE user_id = ?").run(legacy.id);
+  });
+  claim();
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Per-user settings (replaces the old global `settings` key/value store).
+// ---------------------------------------------------------------------------
+
+export function getSetting(db, userId, key) {
+  const row = db.prepare("SELECT value FROM user_settings WHERE user_id = ? AND key = ?").get(userId, key);
   return row ? row.value : null;
 }
 
-export function setSetting(db, key, value) {
+export function setSetting(db, userId, key, value) {
   db.prepare(
-    `INSERT INTO settings (key, value) VALUES (?, ?)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-  ).run(key, value);
+    `INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)
+     ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`
+  ).run(userId, key, value);
 }
 
-export function deleteSetting(db, key) {
-  db.prepare("DELETE FROM settings WHERE key = ?").run(key);
+export function deleteSetting(db, userId, key) {
+  db.prepare("DELETE FROM user_settings WHERE user_id = ? AND key = ?").run(userId, key);
 }
 
 /** Named, re-runnable Market Discovery filter configurations (Phase 2). */
-export function listSavedSearches(db) {
-  return db.prepare("SELECT * FROM saved_searches ORDER BY created_at DESC").all();
+export function listSavedSearches(db, userId) {
+  return db.prepare("SELECT * FROM saved_searches WHERE user_id = ? ORDER BY created_at DESC").all(userId);
 }
 
-export function getSavedSearch(db, id) {
-  return db.prepare("SELECT * FROM saved_searches WHERE id = ?").get(id);
+export function getSavedSearch(db, userId, id) {
+  return db.prepare("SELECT * FROM saved_searches WHERE id = ? AND user_id = ?").get(id, userId);
 }
 
-export function createSavedSearch(db, params) {
+export function createSavedSearch(db, userId, params) {
   const now = new Date().toISOString();
   const result = db
     .prepare(
       `INSERT INTO saved_searches
-         (name, status, tag, resolution_from, resolution_to, min_volume, min_liquidity, keyword, schedule_minutes, created_at, updated_at)
-       VALUES (@name, @status, @tag, @resolutionFrom, @resolutionTo, @minVolume, @minLiquidity, @keyword, @scheduleMinutes, @now, @now)`
+         (user_id, name, status, tag, resolution_from, resolution_to, min_volume, min_liquidity, keyword, schedule_minutes, created_at, updated_at)
+       VALUES (@userId, @name, @status, @tag, @resolutionFrom, @resolutionTo, @minVolume, @minLiquidity, @keyword, @scheduleMinutes, @now, @now)`
     )
     .run({
+      userId,
       name: params.name,
       status: params.status || "active",
       tag: params.tag || null,
@@ -276,10 +465,10 @@ export function createSavedSearch(db, params) {
       scheduleMinutes: params.scheduleMinutes ?? null,
       now,
     });
-  return getSavedSearch(db, result.lastInsertRowid);
+  return getSavedSearch(db, userId, result.lastInsertRowid);
 }
 
-export function updateSavedSearch(db, id, params) {
+export function updateSavedSearch(db, userId, id, params) {
   db.prepare(
     `UPDATE saved_searches SET
        name = @name, status = @status, tag = @tag,
@@ -287,9 +476,10 @@ export function updateSavedSearch(db, id, params) {
        min_volume = @minVolume, min_liquidity = @minLiquidity, keyword = @keyword,
        schedule_minutes = @scheduleMinutes,
        updated_at = @now
-     WHERE id = @id`
+     WHERE id = @id AND user_id = @userId`
   ).run({
     id,
+    userId,
     name: params.name,
     status: params.status || "active",
     tag: params.tag || null,
@@ -301,15 +491,16 @@ export function updateSavedSearch(db, id, params) {
     scheduleMinutes: params.scheduleMinutes ?? null,
     now: new Date().toISOString(),
   });
-  return getSavedSearch(db, id);
+  return getSavedSearch(db, userId, id);
 }
 
-export function deleteSavedSearch(db, id) {
-  db.prepare("DELETE FROM saved_searches WHERE id = ?").run(id);
+export function deleteSavedSearch(db, userId, id) {
+  db.prepare("DELETE FROM saved_searches WHERE id = ? AND user_id = ?").run(id, userId);
 }
 
 // Saved searches whose schedule_minutes has elapsed since last_run_at (or
-// that have never run) — polled by the in-process scheduler in index.js.
+// that have never run) — polled by the in-process scheduler in index.js
+// across EVERY account, so this intentionally isn't scoped to one user.
 export function listDueSavedSearches(db) {
   return db
     .prepare(
@@ -334,16 +525,17 @@ export function computeInputHash({ marketSlug, promptText, modelName, reasoningE
     .digest("hex");
 }
 
-export function findCachedAnalysis(db, inputHash) {
+export function findCachedAnalysis(db, userId, inputHash) {
   return db
     .prepare(
-      "SELECT * FROM ai_analysis WHERE input_hash = ? AND status = 'completed' ORDER BY created_at DESC LIMIT 1"
+      "SELECT * FROM ai_analysis WHERE input_hash = ? AND user_id = ? AND status = 'completed' ORDER BY created_at DESC LIMIT 1"
     )
-    .get(inputHash);
+    .get(inputHash, userId);
 }
 
 export function createAnalysis(
   db,
+  userId,
   {
     marketSlug,
     promptTemplateId = null,
@@ -365,14 +557,15 @@ export function createAnalysis(
   const result = db
     .prepare(
       `INSERT INTO ai_analysis
-         (market_slug, prompt_template_id, prompt_text, input_hash, model_name, reasoning_effort,
+         (user_id, market_slug, prompt_template_id, prompt_text, input_hash, model_name, reasoning_effort,
           result_text, prompt_tokens, completion_tokens, tokens_used, cost_estimate, status, error,
           parent_analysis_id, created_at)
-       VALUES (@marketSlug, @promptTemplateId, @promptText, @inputHash, @modelName, @reasoningEffort,
+       VALUES (@userId, @marketSlug, @promptTemplateId, @promptText, @inputHash, @modelName, @reasoningEffort,
                @resultText, @promptTokens, @completionTokens, @tokensUsed, @costEstimate, @status, @error,
                @parentAnalysisId, @now)`
     )
     .run({
+      userId,
       marketSlug,
       promptTemplateId,
       promptText,
@@ -389,28 +582,35 @@ export function createAnalysis(
       parentAnalysisId,
       now,
     });
-  return getAnalysis(db, result.lastInsertRowid);
+  return getAnalysis(db, userId, result.lastInsertRowid);
 }
 
-export function getAnalysis(db, id) {
-  return db.prepare("SELECT * FROM ai_analysis WHERE id = ?").get(id);
+export function getAnalysis(db, userId, id) {
+  return db.prepare("SELECT * FROM ai_analysis WHERE id = ? AND user_id = ?").get(id, userId);
 }
 
-export function listAnalysesForMarket(db, marketSlug) {
+export function listAnalysesForMarket(db, userId, marketSlug) {
   return db
-    .prepare("SELECT * FROM ai_analysis WHERE market_slug = ? ORDER BY created_at DESC")
-    .all(marketSlug);
+    .prepare("SELECT * FROM ai_analysis WHERE market_slug = ? AND user_id = ? ORDER BY created_at DESC")
+    .all(marketSlug, userId);
 }
 
 // Walks an analysis's parent_analysis_id chain from the root down to `id`
 // itself (inclusive) — reconstructs a follow-up thread (Phase 4) for
 // rebuilding multi-turn DeepSeek context or rendering a conversation view.
-export function getAnalysisThread(db, id) {
+// Ownership is checked once at the root call (`id` must belong to userId);
+// every ancestor in the chain is always the same user's by construction
+// (a follow-up's parentAnalysisId is only ever set from that user's own
+// analysis), so the walk itself doesn't re-check per row.
+export function getAnalysisThread(db, userId, id) {
+  const root = getAnalysis(db, userId, id);
+  if (!root) return [];
+  const byId = db.prepare("SELECT * FROM ai_analysis WHERE id = ?");
   const chain = [];
-  let current = getAnalysis(db, id);
+  let current = root;
   while (current) {
     chain.unshift(current);
-    current = current.parent_analysis_id ? getAnalysis(db, current.parent_analysis_id) : null;
+    current = current.parent_analysis_id ? byId.get(current.parent_analysis_id) : null;
   }
   return chain;
 }
@@ -418,57 +618,63 @@ export function getAnalysisThread(db, id) {
 // Reusable prompt templates (Phase 4) — named, editable, selectable per
 // analysis; replaces Phase 3's single settings-stored prompt string on the
 // Express/SQLite backend (migration 005 seeds one from that old value).
-export function listPromptTemplates(db) {
-  return db.prepare("SELECT * FROM prompt_templates ORDER BY name ASC").all();
+export function listPromptTemplates(db, userId) {
+  return db.prepare("SELECT * FROM prompt_templates WHERE user_id = ? ORDER BY name ASC").all(userId);
 }
 
-export function getPromptTemplate(db, id) {
-  return db.prepare("SELECT * FROM prompt_templates WHERE id = ?").get(id);
+export function getPromptTemplate(db, userId, id) {
+  return db.prepare("SELECT * FROM prompt_templates WHERE id = ? AND user_id = ?").get(id, userId);
 }
 
-export function createPromptTemplate(db, { name, template }) {
+export function createPromptTemplate(db, userId, { name, template }) {
   const now = new Date().toISOString();
   const result = db
-    .prepare("INSERT INTO prompt_templates (name, template, created_at, updated_at) VALUES (?, ?, ?, ?)")
-    .run(name, template, now, now);
-  return getPromptTemplate(db, result.lastInsertRowid);
+    .prepare("INSERT INTO prompt_templates (user_id, name, template, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
+    .run(userId, name, template, now, now);
+  return getPromptTemplate(db, userId, result.lastInsertRowid);
 }
 
-export function updatePromptTemplate(db, id, { name, template }) {
-  db.prepare("UPDATE prompt_templates SET name = ?, template = ?, updated_at = ? WHERE id = ?").run(
-    name,
-    template,
-    new Date().toISOString(),
-    id
-  );
-  return getPromptTemplate(db, id);
+export function updatePromptTemplate(db, userId, id, { name, template }) {
+  db.prepare(
+    "UPDATE prompt_templates SET name = ?, template = ?, updated_at = ? WHERE id = ? AND user_id = ?"
+  ).run(name, template, new Date().toISOString(), id, userId);
+  return getPromptTemplate(db, userId, id);
 }
 
-export function deletePromptTemplate(db, id) {
-  db.prepare("DELETE FROM prompt_templates WHERE id = ?").run(id);
+export function deletePromptTemplate(db, userId, id) {
+  db.prepare("DELETE FROM prompt_templates WHERE id = ? AND user_id = ?").run(id, userId);
 }
 
 // Manually-recorded trades (Phase 5) — created via "Mark as traded", then
 // resolved automatically once their market closes (see the in-process
-// resolution-checker in index.js).
-export function createTrade(db, { marketSlug, side, entryPrice, stake, placedAt, note = null }) {
+// resolution-checker in index.js, which iterates every account's open
+// trades — hence listTrades/listOpenTradeSlugs below support an
+// unscoped/global mode for that internal use, while every HTTP route
+// passes a concrete userId).
+export function createTrade(db, userId, { marketSlug, side, entryPrice, stake, placedAt, note = null }) {
   const now = new Date().toISOString();
   const result = db
     .prepare(
-      `INSERT INTO trades (market_slug, side, entry_price, stake, placed_at, note, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?)`
+      `INSERT INTO trades (user_id, market_slug, side, entry_price, stake, placed_at, note, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)`
     )
-    .run(marketSlug, side, entryPrice, stake, placedAt || now, note, now, now);
-  return getTrade(db, result.lastInsertRowid);
+    .run(userId, marketSlug, side, entryPrice, stake, placedAt || now, note, now, now);
+  return getTrade(db, userId, result.lastInsertRowid);
 }
 
-export function getTrade(db, id) {
-  return db.prepare("SELECT * FROM trades WHERE id = ?").get(id);
+export function getTrade(db, userId, id) {
+  return db.prepare("SELECT * FROM trades WHERE id = ? AND user_id = ?").get(id, userId);
 }
 
-export function listTrades(db, { status, marketSlug } = {}) {
+/** `userId` is optional — omit it only for internal system use (the
+ * resolution-checker scheduler), never from an HTTP route. */
+export function listTrades(db, { status, marketSlug, userId } = {}) {
   const clauses = [];
   const params = [];
+  if (userId != null) {
+    clauses.push("user_id = ?");
+    params.push(userId);
+  }
   if (status) {
     clauses.push("status = ?");
     params.push(status);
@@ -481,6 +687,9 @@ export function listTrades(db, { status, marketSlug } = {}) {
   return db.prepare(`SELECT * FROM trades ${where} ORDER BY placed_at DESC`).all(params);
 }
 
+// Global across every account on purpose — the resolution-checker batches
+// one shared Polymarket price refresh per slug regardless of who holds a
+// trade on it.
 export function listOpenTradeSlugs(db) {
   return db
     .prepare("SELECT DISTINCT market_slug FROM trades WHERE status = 'open'")
@@ -488,27 +697,30 @@ export function listOpenTradeSlugs(db) {
     .map((r) => r.market_slug);
 }
 
-export function deleteTrade(db, id) {
-  db.prepare("DELETE FROM trades WHERE id = ?").run(id);
+export function deleteTrade(db, userId, id) {
+  db.prepare("DELETE FROM trades WHERE id = ? AND user_id = ?").run(id, userId);
 }
 
+// Internal/system use only (called by the resolution-checker with a trade
+// row it already found via the unscoped listTrades) — not exposed as its
+// own route, so no separate ownership check is needed here.
 export function resolveTrade(db, id, { status, payout, profit }) {
   db.prepare(
     `UPDATE trades SET status = ?, payout = ?, profit = ?, resolved_at = ?, updated_at = ? WHERE id = ?`
   ).run(status, payout, profit, new Date().toISOString(), new Date().toISOString(), id);
-  return getTrade(db, id);
+  return db.prepare("SELECT * FROM trades WHERE id = ?").get(id);
 }
 
-// Bankroll ledger (Phase 7) — layered on top of the starting bankroll
-// amount (a setting, see index.js): current balance = starting amount +
-// sum(deposit/credit) - sum(withdrawal/debit).
-export function createLedgerEntry(db, { entryType, amount, tradeId = null, note = null }) {
+// Bankroll ledger (Phase 7) — layered on top of each user's starting
+// bankroll amount (a per-user setting, see index.js): current balance =
+// starting amount + sum(deposit/credit) - sum(withdrawal/debit).
+export function createLedgerEntry(db, userId, { entryType, amount, tradeId = null, note = null }) {
   const now = new Date().toISOString();
   const result = db
     .prepare(
-      `INSERT INTO bankroll_ledger (entry_type, amount, trade_id, note, created_at) VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO bankroll_ledger (user_id, entry_type, amount, trade_id, note, created_at) VALUES (?, ?, ?, ?, ?, ?)`
     )
-    .run(entryType, amount, tradeId, note, now);
+    .run(userId, entryType, amount, tradeId, note, now);
   return getLedgerEntry(db, result.lastInsertRowid);
 }
 
@@ -516,12 +728,14 @@ export function getLedgerEntry(db, id) {
   return db.prepare("SELECT * FROM bankroll_ledger WHERE id = ?").get(id);
 }
 
-export function listLedgerEntries(db, { limit = 100 } = {}) {
-  return db.prepare("SELECT * FROM bankroll_ledger ORDER BY created_at DESC LIMIT ?").all(limit);
+export function listLedgerEntries(db, userId, { limit = 100 } = {}) {
+  return db
+    .prepare("SELECT * FROM bankroll_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT ?")
+    .all(userId, limit);
 }
 
-export function getLedgerNetDelta(db) {
-  const rows = db.prepare("SELECT entry_type, amount FROM bankroll_ledger").all();
+export function getLedgerNetDelta(db, userId) {
+  const rows = db.prepare("SELECT entry_type, amount FROM bankroll_ledger WHERE user_id = ?").all(userId);
   let net = 0;
   for (const r of rows) {
     if (r.entry_type === "deposit" || r.entry_type === "credit") net += r.amount;
@@ -530,6 +744,9 @@ export function getLedgerNetDelta(db) {
   return net;
 }
 
+// id-based internal helpers used only by the resolution-checker/trade
+// deletion — the trade row they act on was already fetched/owned-checked
+// by the caller (or, for the scheduler, is intentionally cross-account).
 export function hasDebitForTrade(db, tradeId) {
   return !!db.prepare("SELECT 1 FROM bankroll_ledger WHERE trade_id = ? AND entry_type = 'debit'").get(tradeId);
 }
@@ -539,16 +756,18 @@ export function deleteLedgerEntriesForTrade(db, tradeId) {
 }
 
 /** Audit trail of catalog fetches (ad hoc or from a saved search), Phase 2. */
-export function createFetchRun(db, { savedSearchId = null, filters }) {
+export function createFetchRun(db, userId, { savedSearchId = null, filters }) {
   const result = db
     .prepare(
-      `INSERT INTO fetch_runs (saved_search_id, filters_json, started_at, status)
-       VALUES (?, ?, ?, 'running')`
+      `INSERT INTO fetch_runs (user_id, saved_search_id, filters_json, started_at, status)
+       VALUES (?, ?, ?, ?, 'running')`
     )
-    .run(savedSearchId, JSON.stringify(filters ?? {}), new Date().toISOString());
+    .run(userId, savedSearchId, JSON.stringify(filters ?? {}), new Date().toISOString());
   return result.lastInsertRowid;
 }
 
+// id-based (no ownership check) — called right after createFetchRun with an
+// id the caller already knows it owns, and by the saved-search scheduler.
 export function completeFetchRun(db, id, { marketsAdded = 0, marketsUpdated = 0, status = "completed", error = null }) {
   db.prepare(
     `UPDATE fetch_runs SET finished_at = ?, markets_added = ?, markets_updated = ?, status = ?, error = ?
@@ -556,11 +775,15 @@ export function completeFetchRun(db, id, { marketsAdded = 0, marketsUpdated = 0,
   ).run(new Date().toISOString(), marketsAdded, marketsUpdated, status, error, id);
 }
 
-export function listFetchRuns(db, { savedSearchId, limit = 50 } = {}) {
+export function listFetchRuns(db, userId, { savedSearchId, limit = 50 } = {}) {
   if (savedSearchId != null) {
     return db
-      .prepare("SELECT * FROM fetch_runs WHERE saved_search_id = ? ORDER BY started_at DESC LIMIT ?")
-      .all(savedSearchId, limit);
+      .prepare(
+        "SELECT * FROM fetch_runs WHERE saved_search_id = ? AND user_id = ? ORDER BY started_at DESC LIMIT ?"
+      )
+      .all(savedSearchId, userId, limit);
   }
-  return db.prepare("SELECT * FROM fetch_runs ORDER BY started_at DESC LIMIT ?").all(limit);
+  return db
+    .prepare("SELECT * FROM fetch_runs WHERE user_id = ? ORDER BY started_at DESC LIMIT ?")
+    .all(userId, limit);
 }

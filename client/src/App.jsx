@@ -6,10 +6,82 @@ import MarketDetail from "./components/MarketDetail.jsx";
 import SettingsModal from "./components/SettingsModal.jsx";
 import MarketDiscovery from "./components/MarketDiscovery.jsx";
 import MyTrades from "./components/MyTrades.jsx";
+import AuthScreen, { VerifyEmailLanding, ResetPasswordLanding } from "./components/AuthScreen.jsx";
 import { useMarketGroups } from "./hooks/useMarketGroups.js";
 import { useCatalogFetch } from "./hooks/useCatalogFetch.js";
 
+// No router library (consistent with the rest of the app, e.g. the view
+// switcher) — the two email-link landing pages are recognized by a plain
+// window.location check instead.
+function parseUrlRoute() {
+  const path = window.location.pathname;
+  const token = new URLSearchParams(window.location.search).get("token");
+  if (path === "/verify-email" && token) return { type: "verify-email", token };
+  if (path === "/reset-password" && token) return { type: "reset-password", token };
+  return null;
+}
+
 export default function App() {
+  // undefined = still checking the session cookie; null = logged out;
+  // an object = the authenticated user.
+  const [authUser, setAuthUser] = useState(undefined);
+  // This same client is also served by the frozen Vercel/Postgres backend
+  // (api/, lib/), which predates accounts and has no /api/auth/* routes at
+  // all — api.me() reports that via authSupported: false. Showing a login
+  // screen there would lock every visitor out permanently (no working
+  // login endpoint behind it), so the auth gate is skipped entirely on
+  // that backend and the app renders exactly as it did before Phase 8.
+  const [authSupported, setAuthSupported] = useState(true);
+  const [urlRoute, setUrlRoute] = useState(parseUrlRoute);
+
+  useEffect(() => {
+    api
+      .me()
+      .then((r) => {
+        setAuthUser(r.user);
+        setAuthSupported(r.authSupported !== false);
+      })
+      .catch(() => setAuthUser(null));
+  }, []);
+
+  const clearUrlRoute = () => {
+    window.history.replaceState({}, "", "/");
+    setUrlRoute(null);
+  };
+
+  if (urlRoute?.type === "verify-email") {
+    return <VerifyEmailLanding token={urlRoute.token} onDone={clearUrlRoute} />;
+  }
+  if (urlRoute?.type === "reset-password") {
+    return <ResetPasswordLanding token={urlRoute.token} onDone={clearUrlRoute} />;
+  }
+
+  if (authUser === undefined) {
+    return (
+      <div className="auth-screen">
+        <div className="auth-card">
+          <h1>Polymarket Tracker</h1>
+          <p>Loading…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (authSupported && authUser === null) {
+    return <AuthScreen onAuthenticated={setAuthUser} />;
+  }
+
+  return (
+    <MainApp
+      user={authSupported ? authUser : null}
+      onLogout={() => {
+        api.logout().finally(() => setAuthUser(null));
+      }}
+    />
+  );
+}
+
+function MainApp({ user, onLogout }) {
   const [stats, setStats] = useState({ count: 0, lastUpdated: null });
 
   const [search, setSearch] = useState("");
@@ -199,6 +271,8 @@ export default function App() {
         onSync={startSync}
         onExport={() => window.open(api.exportUrl(), "_blank")}
         onOpenSettings={() => setSettingsOpen(true)}
+        user={user}
+        onLogout={onLogout}
       />
       <main className="main">
         <div className="view-switcher">

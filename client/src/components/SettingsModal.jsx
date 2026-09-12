@@ -4,6 +4,22 @@ import { api } from "../api.js";
 const PROMPT_VARIABLES = ["slug", "yes_price", "no_price", "end_date", "liquidity"];
 
 export default function SettingsModal({ onClose, onStatusChange }) {
+  const [claimingLegacy, setClaimingLegacy] = useState(false);
+  const [claimNote, setClaimNote] = useState(null);
+
+  const claimLegacyData = async () => {
+    setClaimingLegacy(true);
+    setClaimNote(null);
+    try {
+      const { claimed } = await api.claimLegacyData();
+      setClaimNote(claimed ? "Claimed — refresh to see it." : "There's no legacy account to claim from.");
+    } catch (err) {
+      setClaimNote(err.message);
+    } finally {
+      setClaimingLegacy(false);
+    }
+  };
+
   const [status, setStatus] = useState(null);
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
@@ -310,6 +326,22 @@ export default function SettingsModal({ onClose, onStatusChange }) {
         </div>
 
         <div className="modal-body">
+          <p className="settings-label">Account</p>
+          <p className="settings-hint">
+            If this app had data from before accounts existed, claim it as your own — saved
+            searches, analyses, templates, trades, and bankroll ledger entries owned by the
+            placeholder legacy account transfer to you. Safe to click more than once; it's a
+            no-op once there's nothing left to claim.
+          </p>
+          <div className="modal-actions">
+            <button className="btn btn-ghost" onClick={claimLegacyData} disabled={claimingLegacy}>
+              {claimingLegacy ? "Claiming…" : "Claim legacy data"}
+            </button>
+          </div>
+          {claimNote && <p className="settings-note">{claimNote}</p>}
+
+          <hr className="modal-divider" />
+
           <p className="settings-label">DeepSeek API key</p>
           {status && (
             <p className="settings-status">
