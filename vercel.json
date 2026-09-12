@@ -3,7 +3,7 @@
   "outputDirectory": "client/dist",
   "functions": {
     "api/**/*.js": {
-      "maxDuration": 30
+      "maxDuration": 60
     }
   }
 }

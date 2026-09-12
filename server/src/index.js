@@ -14,6 +14,7 @@ import {
 } from "./db.js";
 import { fetchPriceHistory } from "./polymarket.js";
 import { runSyncStep, refreshMarketPrices } from "./sync.js";
+import { analyzeMarket } from "./deepseek.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
@@ -60,6 +61,17 @@ app.get("/api/markets/:slug/history", async (req, res) => {
   try {
     const history = await fetchPriceHistory(row.yes_token_id, req.query.interval || "max");
     res.json(history);
+  } catch (err) {
+    res.status(502).json({ error: String(err.message ?? err) });
+  }
+});
+
+app.post("/api/markets/:slug/analyze", async (req, res) => {
+  const row = getMarket(getDb(DEFAULT_DB_PATH), req.params.slug);
+  if (!row) return res.status(404).json({ error: "Market not found" });
+  try {
+    const analysis = await analyzeMarket(row.slug);
+    res.status(200).json({ analysis });
   } catch (err) {
     res.status(502).json({ error: String(err.message ?? err) });
   }

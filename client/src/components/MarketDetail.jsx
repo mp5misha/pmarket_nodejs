@@ -15,10 +15,16 @@ export default function MarketDetail({ market }) {
   const [loadingHist, setLoadingHist] = useState(false);
   const [histError, setHistError] = useState(null);
 
-  // Reset the chart whenever a different market is selected
+  const [analysis, setAnalysis] = useState(null);
+  const [loadingAnalysis, setLoadingAnalysis] = useState(false);
+  const [analysisError, setAnalysisError] = useState(null);
+
+  // Reset the chart and any AI analysis whenever a different market is selected
   useEffect(() => {
     setHistory(null);
     setHistError(null);
+    setAnalysis(null);
+    setAnalysisError(null);
   }, [market.slug]);
 
   const loadHistory = async () => {
@@ -31,6 +37,19 @@ export default function MarketDetail({ market }) {
       setHistError(err.message);
     } finally {
       setLoadingHist(false);
+    }
+  };
+
+  const runAnalysis = async () => {
+    setLoadingAnalysis(true);
+    setAnalysisError(null);
+    try {
+      const { analysis } = await api.analyzeMarket(market.slug);
+      setAnalysis(analysis);
+    } catch (err) {
+      setAnalysisError(err.message);
+    } finally {
+      setLoadingAnalysis(false);
     }
   };
 
@@ -91,6 +110,17 @@ export default function MarketDetail({ market }) {
           </ResponsiveContainer>
         </div>
       )}
+
+      <div className="ai-analysis">
+        <div className="ai-analysis-header">
+          <h4>AI analysis (DeepSeek)</h4>
+          <button className="btn btn-small" onClick={runAnalysis} disabled={loadingAnalysis}>
+            {loadingAnalysis ? "Analyzing…" : analysis ? "Re-analyze" : "Analyze with DeepSeek"}
+          </button>
+        </div>
+        {analysisError && <p className="sync-error">{analysisError}</p>}
+        {analysis && <div className="ai-analysis-text">{analysis}</div>}
+      </div>
     </section>
   );
 }

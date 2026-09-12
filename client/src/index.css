@@ -379,6 +379,38 @@ table.ledger tbody tr.selected {
   margin: 0 0 16px;
 }
 
+.ai-analysis {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
+}
+
+.ai-analysis-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.ai-analysis-header h4 {
+  font-family: var(--font-serif);
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.ai-analysis-text {
+  margin-top: 12px;
+  padding: 14px 16px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
 .empty-state {
   border: 1px dashed var(--rule);
   border-radius: 6px;

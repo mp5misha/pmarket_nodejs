@@ -2,21 +2,25 @@
 
 A local web app for browsing Polymarket's public market data: slug, current
 price, resolution date, volume, liquidity, and (optionally) the all-time
-min/max price, pulled from Polymarket's public Gamma and CLOB APIs.
+min/max price, pulled from Polymarket's public Gamma and CLOB APIs — plus
+on-demand AI analysis of a selected market via the DeepSeek API.
 
 ```
 polymarket-app/
   api/      Vercel serverless functions — same endpoints as server/, backed
             by Postgres instead of a local file (for deploying on Vercel)
-  lib/      Shared Gamma/CLOB client + Postgres data layer, used by api/
+  lib/      Shared Gamma/CLOB client, DeepSeek client, and Postgres data
+            layer, used by api/
   server/   Express API — same endpoints, backed by local SQLite (for
             Replit/Render/Railway/local use)
   client/   Vite + React UI — sync controls, a filterable market table, and a
-            detail panel with an on-demand price-history chart
+            detail panel with an on-demand price-history chart and DeepSeek
+            analysis
 ```
 
 No Polymarket API key or wallet needed — both Gamma and CLOB endpoints are
 public. You do need a (free) Postgres database if deploying to Vercel — see
+below. AI analysis needs a DeepSeek API key — see **AI analysis (DeepSeek)**
 below.
 
 ## Deploy natively to Vercel
@@ -166,9 +170,36 @@ proxies `/api/*` requests to the Express server, so both need to be running.
   selected prices** to re-fetch just those markets' current price, volume,
   and liquidity from Polymarket without re-running a full sync. Any
   previously-computed min/max and CLOB token id are left untouched.
-- **Detail panel** — full metrics plus a **Load price history chart** button
-  that fetches that market's complete price history on demand and plots it.
+- **Detail panel** — full metrics, a **Load price history chart** button
+  that fetches that market's complete price history on demand and plots it,
+  and an **Analyze with DeepSeek** button (see below).
 - **Export CSV** in the sidebar downloads everything currently stored.
+
+## AI analysis (DeepSeek)
+
+Selecting a market and clicking **Analyze with DeepSeek** in its detail panel
+sends this prompt to DeepSeek's chat completions API and displays the reply:
+
+> Could you please analyze the real probability and analyze all the
+> background information available for the following event at Polymarket:
+> `{market slug}`
+
+This needs a DeepSeek API key (get one at
+[platform.deepseek.com](https://platform.deepseek.com)) set as an environment
+variable wherever the API runs:
+
+- **Local (`server/`)**: `export DEEPSEEK_API_KEY=sk-...` before `npm start`.
+- **Render/Railway**: add `DEEPSEEK_API_KEY` under the service's environment
+  variables.
+- **Vercel**: add `DEEPSEEK_API_KEY` under **Settings → Environment
+  Variables**.
+
+Optional overrides: `DEEPSEEK_MODEL` (default `deepseek-chat`) and
+`DEEPSEEK_BASE_URL` (default `https://api.deepseek.com`, for a proxy or
+compatible endpoint). Without `DEEPSEEK_API_KEY` set, the button returns a
+clear "not configured" error instead of failing silently. A full analysis
+can take a while — the Vercel function's `maxDuration` is set to 60s to give
+it room (still clamped lower on the Hobby plan).
 
 ## Notes
 

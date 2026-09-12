@@ -25,6 +25,10 @@ export const api = {
   history: (slug, interval = "max") =>
     fetch(`${BASE}/markets/${encodeURIComponent(slug)}/history?interval=${interval}`).then(handle),
   tags: () => fetch(`${BASE}/tags`).then(handle),
+  // Asks DeepSeek to analyze one market's real probability and background —
+  // can take a while (up to a minute or so), so no client-side timeout here.
+  analyzeMarket: (slug) =>
+    fetch(`${BASE}/markets/${encodeURIComponent(slug)}/analyze`, { method: "POST" }).then(handle),
   // Bulk-refreshes current price/volume/liquidity for the given slugs from
   // Polymarket, in place of a full sync — used by the table's "Update
   // selected" action.
