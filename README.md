@@ -190,6 +190,38 @@ proxies `/api/*` requests to the Express server, so both need to be running.
   **Analyze with DeepSeek** button (see below).
 - **Export CSV** in the sidebar downloads everything currently stored.
 
+## Market Discovery (Express/SQLite only)
+
+The **Market Discovery** tab (next to **All Markets**) is a configurable
+screen for building and reusing catalog-fetch filters, separate from the
+sidebar's quick "Run sync":
+
+- **Filters** — status (active/resolved/all), category/tag, a resolution
+  date range, minimum volume, minimum liquidity, and a keyword match against
+  the market question. These apply at fetch time (skipping non-matching
+  markets before they're upserted), not as a display-only filter.
+- **Save search** — name the current filter combination and click **Save
+  search** to keep it for reuse; it appears in the **Saved searches** table
+  below with **Run** (fetch now, using that search's filters) and **Delete**.
+- **Fetch now** — runs the current filters immediately without saving them,
+  the same idempotent upsert used everywhere else (existing markets are
+  updated in place by slug; new ones are inserted — nothing is duplicated on
+  a rerun).
+- **Scheduled reruns (optional)** — set "Auto re-run every N minutes" when
+  saving a search to have the server itself rerun it on that interval, via
+  an in-process scheduler (checked once a minute) — no separate job queue.
+  Leave it blank for manual-only. This only runs while the server process
+  stays up; there's no persistent external cron.
+- **Fetch run history** — every fetch (ad hoc, saved-search, or scheduled)
+  is recorded with its start time, status, filters, and how many markets
+  were added vs. updated, shown in the **Recent fetch runs** table.
+
+This tab, saved searches, and fetch-run auditing are **only implemented on
+the Express/SQLite backend** — they call `/api/saved-searches` and
+`/api/fetch-runs`, which don't exist on the frozen Vercel/Postgres deploy.
+The screen degrades gracefully there (shows "not available on this deploy
+target" instead of breaking) rather than erroring out.
+
 ## AI analysis (DeepSeek)
 
 Selecting a market and clicking **Analyze with DeepSeek** in its detail panel

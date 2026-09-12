@@ -82,4 +82,44 @@ export const api = {
     }).then(handle),
   resetPromptTemplate: () =>
     fetch(`${BASE}/settings/deepseek-prompt`, { method: "DELETE" }).then(handle),
+
+  // Market Discovery (Phase 2): saved search configurations and an audit
+  // trail of catalog fetches. Not available on the frozen Vercel deploy
+  // yet — callers should treat rejection as "feature unavailable here"
+  // rather than a hard failure.
+  listSavedSearches: () => fetch(`${BASE}/saved-searches`).then(handle),
+  createSavedSearch: (params) =>
+    fetch(`${BASE}/saved-searches`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    }).then(handle),
+  updateSavedSearch: (id, params) =>
+    fetch(`${BASE}/saved-searches/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    }).then(handle),
+  deleteSavedSearch: (id) =>
+    fetch(`${BASE}/saved-searches/${id}`, { method: "DELETE" }).then((res) => {
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+    }),
+  listFetchRuns: (params = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== "" && v !== null)
+    ).toString();
+    return fetch(`${BASE}/fetch-runs${qs ? `?${qs}` : ""}`).then(handle);
+  },
+  createFetchRun: (params) =>
+    fetch(`${BASE}/fetch-runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    }).then(handle),
+  completeFetchRun: (id, params) =>
+    fetch(`${BASE}/fetch-runs/${id}/complete`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    }).then(handle),
 };

@@ -245,3 +245,107 @@ export function setSetting(db, key, value) {
 export function deleteSetting(db, key) {
   db.prepare("DELETE FROM settings WHERE key = ?").run(key);
 }
+
+/** Named, re-runnable Market Discovery filter configurations (Phase 2). */
+export function listSavedSearches(db) {
+  return db.prepare("SELECT * FROM saved_searches ORDER BY created_at DESC").all();
+}
+
+export function getSavedSearch(db, id) {
+  return db.prepare("SELECT * FROM saved_searches WHERE id = ?").get(id);
+}
+
+export function createSavedSearch(db, params) {
+  const now = new Date().toISOString();
+  const result = db
+    .prepare(
+      `INSERT INTO saved_searches
+         (name, status, tag, resolution_from, resolution_to, min_volume, min_liquidity, keyword, schedule_minutes, created_at, updated_at)
+       VALUES (@name, @status, @tag, @resolutionFrom, @resolutionTo, @minVolume, @minLiquidity, @keyword, @scheduleMinutes, @now, @now)`
+    )
+    .run({
+      name: params.name,
+      status: params.status || "active",
+      tag: params.tag || null,
+      resolutionFrom: params.resolutionFrom || null,
+      resolutionTo: params.resolutionTo || null,
+      minVolume: params.minVolume ?? null,
+      minLiquidity: params.minLiquidity ?? null,
+      keyword: params.keyword || null,
+      scheduleMinutes: params.scheduleMinutes ?? null,
+      now,
+    });
+  return getSavedSearch(db, result.lastInsertRowid);
+}
+
+export function updateSavedSearch(db, id, params) {
+  db.prepare(
+    `UPDATE saved_searches SET
+       name = @name, status = @status, tag = @tag,
+       resolution_from = @resolutionFrom, resolution_to = @resolutionTo,
+       min_volume = @minVolume, min_liquidity = @minLiquidity, keyword = @keyword,
+       schedule_minutes = @scheduleMinutes,
+       updated_at = @now
+     WHERE id = @id`
+  ).run({
+    id,
+    name: params.name,
+    status: params.status || "active",
+    tag: params.tag || null,
+    resolutionFrom: params.resolutionFrom || null,
+    resolutionTo: params.resolutionTo || null,
+    minVolume: params.minVolume ?? null,
+    minLiquidity: params.minLiquidity ?? null,
+    keyword: params.keyword || null,
+    scheduleMinutes: params.scheduleMinutes ?? null,
+    now: new Date().toISOString(),
+  });
+  return getSavedSearch(db, id);
+}
+
+export function deleteSavedSearch(db, id) {
+  db.prepare("DELETE FROM saved_searches WHERE id = ?").run(id);
+}
+
+// Saved searches whose schedule_minutes has elapsed since last_run_at (or
+// that have never run) — polled by the in-process scheduler in index.js.
+export function listDueSavedSearches(db) {
+  return db
+    .prepare(
+      `SELECT * FROM saved_searches
+       WHERE schedule_minutes IS NOT NULL AND schedule_minutes > 0
+         AND (last_run_at IS NULL OR datetime(last_run_at, '+' || schedule_minutes || ' minutes') <= datetime('now'))`
+    )
+    .all();
+}
+
+export function markSavedSearchRun(db, id) {
+  db.prepare("UPDATE saved_searches SET last_run_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+}
+
+/** Audit trail of catalog fetches (ad hoc or from a saved search), Phase 2. */
+export function createFetchRun(db, { savedSearchId = null, filters }) {
+  const result = db
+    .prepare(
+      `INSERT INTO fetch_runs (saved_search_id, filters_json, started_at, status)
+       VALUES (?, ?, ?, 'running')`
+    )
+    .run(savedSearchId, JSON.stringify(filters ?? {}), new Date().toISOString());
+  return result.lastInsertRowid;
+}
+
+export function completeFetchRun(db, id, { marketsAdded = 0, marketsUpdated = 0, status = "completed", error = null }) {
+  db.prepare(
+    `UPDATE fetch_runs SET finished_at = ?, markets_added = ?, markets_updated = ?, status = ?, error = ?
+     WHERE id = ?`
+  ).run(new Date().toISOString(), marketsAdded, marketsUpdated, status, error, id);
+}
+
+export function listFetchRuns(db, { savedSearchId, limit = 50 } = {}) {
+  if (savedSearchId != null) {
+    return db
+      .prepare("SELECT * FROM fetch_runs WHERE saved_search_id = ? ORDER BY started_at DESC LIMIT ?")
+      .all(savedSearchId, limit);
+  }
+  return db.prepare("SELECT * FROM fetch_runs ORDER BY started_at DESC LIMIT ?").all(limit);
+}

@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import Sidebar from "./components/Sidebar.jsx";
 import MarketGrid from "./components/MarketGrid.jsx";
 import MarketDetail from "./components/MarketDetail.jsx";
 import SettingsModal from "./components/SettingsModal.jsx";
+import MarketDiscovery from "./components/MarketDiscovery.jsx";
 import { useMarketGroups } from "./hooks/useMarketGroups.js";
+import { useCatalogFetch } from "./hooks/useCatalogFetch.js";
 
 export default function App() {
   const [stats, setStats] = useState({ count: 0, lastUpdated: null });
@@ -49,10 +51,10 @@ export default function App() {
   const [selectedSlugs, setSelectedSlugs] = useState(() => new Set());
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState(null);
-  const [syncStatus, setSyncStatus] = useState({ running: false, total: 0, limit: 0 });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [deepseekStatus, setDeepseekStatus] = useState(null);
-  const cancelRef = useRef(false);
+  const [view, setView] = useState("markets");
+  const { syncStatus, run: runCatalogFetch } = useCatalogFetch();
 
   const refreshStats = async () => {
     try {
@@ -93,10 +95,6 @@ export default function App() {
     setSelectedSlugs(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search, status, sortBy, minVolume, minPrice, maxPrice, tag, pageSize]);
-
-  useEffect(() => () => {
-    cancelRef.current = true;
-  }, []);
 
   // The selected market is fetched independently of the current page's rows
   // — pagination or a filter change shouldn't lose the detail panel, and a
@@ -161,53 +159,18 @@ export default function App() {
     }
   };
 
-  // Runs the sync as a series of bounded steps (see api.syncStep) — small
-  // enough per call to stay well within a serverless function's time limit,
-  // looped here in the browser until the target is reached or the server
-  // reports no more pages.
-  const startSync = async ({
-    limit,
-    status: syncStatusFilter,
-    tag: syncTag,
-    resolutionFrom,
-    resolutionTo,
-    history,
-    interval,
-    delay,
-  }) => {
-    cancelRef.current = false;
-    setSyncStatus({ running: true, total: 0, limit, error: null });
-
-    // Keep each request small when fetching price history (one extra HTTP
-    // call per market), larger when not.
-    const batchSize = history ? 20 : 100;
-    let offset = 0;
-    let total = 0;
-
+  // Thin wrapper around useCatalogFetch's run() for the sidebar's "Run
+  // sync" button — same audited-fetch-run path the Market Discovery screen
+  // uses (Phase 2), just without a saved search behind it.
+  const startSync = async (params) => {
     try {
-      while (total < limit && !cancelRef.current) {
-        const step = await api.syncStep({
-          offset,
-          batchSize: Math.min(batchSize, limit - total),
-          status: syncStatusFilter,
-          tag: syncTag,
-          resolutionFrom,
-          resolutionTo,
-          history,
-          interval,
-        });
-        total += step.processed;
-        offset = step.nextOffset;
-        setSyncStatus({ running: true, total, limit, error: null });
-        if (step.done) break;
-        if (delay) await new Promise((resolve) => setTimeout(resolve, delay * 1000));
-      }
-      setSyncStatus({ running: false, total, limit, error: null });
+      await runCatalogFetch(params);
+    } catch {
+      // syncStatus.error already reflects the failure — nothing else to do.
+    } finally {
       refreshStats();
       refreshTags();
       refetchGrid();
-    } catch (err) {
-      setSyncStatus({ running: false, total, limit, error: err.message });
     }
   };
 
@@ -223,103 +186,124 @@ export default function App() {
         onOpenSettings={() => setSettingsOpen(true)}
       />
       <main className="main">
-        <h2>Polymarket Markets</h2>
-
-        <div className="filters">
-          <input
-            type="text"
-            placeholder="Search question or slug"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          <select value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="">All statuses</option>
-            <option value="active">Active</option>
-            <option value="closed">Closed</option>
-          </select>
-          <input
-            type="number"
-            placeholder="Min volume $"
-            value={minVolume || ""}
-            onChange={(e) => setMinVolume(Number(e.target.value) || 0)}
-          />
-          <select value={tag} onChange={(e) => setTag(e.target.value)}>
-            <option value="">All categories</option>
-            {tags.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-          <input
-            type="number"
-            placeholder="Min price"
-            min={0}
-            max={1}
-            step={0.01}
-            value={minPrice}
-            onChange={(e) => setMinPrice(e.target.value === "" ? "" : Number(e.target.value))}
-          />
-          <input
-            type="number"
-            placeholder="Max price"
-            min={0}
-            max={1}
-            step={0.01}
-            value={maxPrice}
-            onChange={(e) => setMaxPrice(e.target.value === "" ? "" : Number(e.target.value))}
-          />
+        <div className="view-switcher">
+          <button
+            className={`view-tab ${view === "markets" ? "active" : ""}`}
+            onClick={() => setView("markets")}
+          >
+            All Markets
+          </button>
+          <button
+            className={`view-tab ${view === "discovery" ? "active" : ""}`}
+            onClick={() => setView("discovery")}
+          >
+            Market Discovery
+          </button>
         </div>
 
-        {refreshError && <p className="sync-error">{refreshError}</p>}
-
-        {!loading && totalMarkets === 0 && groups.length === 0 && !search && !status && !tag ? (
-          <div className="empty-state">
-            No markets stored yet. Use <strong>Run sync</strong> in the sidebar to fetch from Polymarket.
-          </div>
+        {view === "discovery" ? (
+          <MarketDiscovery tags={tags} />
         ) : (
           <>
-            <div className="toolbar">
-              <div className="bulk-actions">
-                <span className="selected-count">{selectedSlugs.size} selected</span>
-                <button
-                  className="btn btn-small"
-                  disabled={selectedSlugs.size === 0 || refreshing}
-                  onClick={updateSelectedPrices}
-                >
-                  {refreshing ? "Updating…" : "Update selected prices"}
-                </button>
-              </div>
-            </div>
-            <MarketGrid
-              groups={groups}
-              total={totalMarkets}
-              page={page}
-              pageSize={pageSize}
-              onPageChange={setPage}
-              onPageSizeChange={setPageSize}
-              sortBy={sortBy}
-              onSortByChange={setSortBy}
-              loading={loading}
-              error={error}
-              lastFetchedAt={lastFetchedAt}
-              refreshIntervalSec={refreshIntervalSec}
-              onRefreshIntervalChange={setRefreshIntervalSec}
-              selectedSlug={selectedSlug}
-              onSelectMarket={setSelectedSlug}
-              selectedSlugs={selectedSlugs}
-              onToggleSelect={toggleSelectMarket}
-              onToggleSelectAll={toggleSelectAllMarkets}
-            />
-          </>
-        )}
+            <h2>Polymarket Markets</h2>
 
-        {selectedMarket && (
-          <MarketDetail
-            market={selectedMarket}
-            onOpenSettings={() => setSettingsOpen(true)}
-            onSelectRelated={setSelectedSlug}
-          />
+            <div className="filters">
+              <input
+                type="text"
+                placeholder="Search question or slug"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <select value={status} onChange={(e) => setStatus(e.target.value)}>
+                <option value="">All statuses</option>
+                <option value="active">Active</option>
+                <option value="closed">Closed</option>
+              </select>
+              <input
+                type="number"
+                placeholder="Min volume $"
+                value={minVolume || ""}
+                onChange={(e) => setMinVolume(Number(e.target.value) || 0)}
+              />
+              <select value={tag} onChange={(e) => setTag(e.target.value)}>
+                <option value="">All categories</option>
+                {tags.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+              <input
+                type="number"
+                placeholder="Min price"
+                min={0}
+                max={1}
+                step={0.01}
+                value={minPrice}
+                onChange={(e) => setMinPrice(e.target.value === "" ? "" : Number(e.target.value))}
+              />
+              <input
+                type="number"
+                placeholder="Max price"
+                min={0}
+                max={1}
+                step={0.01}
+                value={maxPrice}
+                onChange={(e) => setMaxPrice(e.target.value === "" ? "" : Number(e.target.value))}
+              />
+            </div>
+
+            {refreshError && <p className="sync-error">{refreshError}</p>}
+
+            {!loading && totalMarkets === 0 && groups.length === 0 && !search && !status && !tag ? (
+              <div className="empty-state">
+                No markets stored yet. Use <strong>Run sync</strong> in the sidebar to fetch from Polymarket.
+              </div>
+            ) : (
+              <>
+                <div className="toolbar">
+                  <div className="bulk-actions">
+                    <span className="selected-count">{selectedSlugs.size} selected</span>
+                    <button
+                      className="btn btn-small"
+                      disabled={selectedSlugs.size === 0 || refreshing}
+                      onClick={updateSelectedPrices}
+                    >
+                      {refreshing ? "Updating…" : "Update selected prices"}
+                    </button>
+                  </div>
+                </div>
+                <MarketGrid
+                  groups={groups}
+                  total={totalMarkets}
+                  page={page}
+                  pageSize={pageSize}
+                  onPageChange={setPage}
+                  onPageSizeChange={setPageSize}
+                  sortBy={sortBy}
+                  onSortByChange={setSortBy}
+                  loading={loading}
+                  error={error}
+                  lastFetchedAt={lastFetchedAt}
+                  refreshIntervalSec={refreshIntervalSec}
+                  onRefreshIntervalChange={setRefreshIntervalSec}
+                  selectedSlug={selectedSlug}
+                  onSelectMarket={setSelectedSlug}
+                  selectedSlugs={selectedSlugs}
+                  onToggleSelect={toggleSelectMarket}
+                  onToggleSelectAll={toggleSelectAllMarkets}
+                />
+              </>
+            )}
+
+            {selectedMarket && (
+              <MarketDetail
+                market={selectedMarket}
+                onOpenSettings={() => setSettingsOpen(true)}
+                onSelectRelated={setSelectedSlug}
+              />
+            )}
+          </>
         )}
       </main>
 
