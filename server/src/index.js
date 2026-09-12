@@ -99,17 +99,23 @@ app.post("/api/sync/step", async (req, res) => {
     const {
       offset = 0,
       batchSize = 50,
-      closed = false,
+      status = "active",
       history = false,
       interval = "max",
+      tag = "",
+      resolutionFrom = "",
+      resolutionTo = "",
     } = req.body || {};
     const result = await runSyncStep({
       dbPath: DEFAULT_DB_PATH,
       offset,
       batchSize,
-      closed,
+      status,
       history,
       interval,
+      tag,
+      resolutionFrom,
+      resolutionTo,
     });
     res.status(200).json(result);
   } catch (err) {

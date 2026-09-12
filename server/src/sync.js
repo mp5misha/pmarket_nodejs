@@ -4,6 +4,8 @@ import {
   fetchMarketBySlug,
   fetchPriceHistory,
   normalizeMarket,
+  resolveStatusFilter,
+  inResolutionRange,
 } from "./polymarket.js";
 
 const REFRESH_CONCURRENCY = 4;
@@ -16,17 +18,23 @@ export async function runSyncStep({
   dbPath,
   offset = 0,
   batchSize = 50,
-  closed = false,
+  status = "active",
   history = false,
   interval = "max",
+  tag = "",
+  resolutionFrom = "",
+  resolutionTo = "",
 }) {
   const db = getDb(dbPath);
-  const page = await fetchMarketsPage(offset, { limit: batchSize, active: !closed, closed });
+  const { active, closed } = resolveStatusFilter(status);
+  const page = await fetchMarketsPage(offset, { limit: batchSize, active, closed });
 
   let processed = 0;
   for (const raw of page) {
     const m = normalizeMarket(raw);
     if (!m.slug) continue;
+    if (tag && !m.tags.includes(tag)) continue;
+    if (!inResolutionRange(m.resolutionDate, resolutionFrom, resolutionTo)) continue;
 
     let minPrice = null;
     let maxPrice = null;

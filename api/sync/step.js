@@ -1,5 +1,11 @@
 import { getPool, ensureSchema, upsertMarket } from "../../lib/db.js";
-import { fetchMarketsPage, fetchPriceHistory, normalizeMarket } from "../../lib/polymarket.js";
+import {
+  fetchMarketsPage,
+  fetchPriceHistory,
+  normalizeMarket,
+  resolveStatusFilter,
+  inResolutionRange,
+} from "../../lib/polymarket.js";
 
 // Processes exactly one page (bounded by batchSize) per invocation, so this
 // stays well within Vercel's function time limit even on the Hobby plan.
@@ -17,17 +23,23 @@ export default async function handler(req, res) {
     const {
       offset = 0,
       batchSize = 50,
-      closed = false,
+      status = "active",
       history = false,
       interval = "max",
+      tag = "",
+      resolutionFrom = "",
+      resolutionTo = "",
     } = req.body || {};
 
-    const page = await fetchMarketsPage(offset, { limit: batchSize, active: !closed, closed });
+    const { active, closed } = resolveStatusFilter(status);
+    const page = await fetchMarketsPage(offset, { limit: batchSize, active, closed });
 
     let processed = 0;
     for (const raw of page) {
       const m = normalizeMarket(raw);
       if (!m.slug) continue;
+      if (tag && !m.tags.includes(tag)) continue;
+      if (!inResolutionRange(m.resolutionDate, resolutionFrom, resolutionTo)) continue;
 
       let minPrice = null;
       let maxPrice = null;

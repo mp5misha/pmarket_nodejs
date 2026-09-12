@@ -126,7 +126,16 @@ export default function App() {
   // enough per call to stay well within a serverless function's time limit,
   // looped here in the browser until the target is reached or the server
   // reports no more pages.
-  const startSync = async ({ limit, closed, history, interval, delay }) => {
+  const startSync = async ({
+    limit,
+    status: syncStatusFilter,
+    tag: syncTag,
+    resolutionFrom,
+    resolutionTo,
+    history,
+    interval,
+    delay,
+  }) => {
     cancelRef.current = false;
     setSyncStatus({ running: true, total: 0, limit, error: null });
 
@@ -141,7 +150,10 @@ export default function App() {
         const step = await api.syncStep({
           offset,
           batchSize: Math.min(batchSize, limit - total),
-          closed,
+          status: syncStatusFilter,
+          tag: syncTag,
+          resolutionFrom,
+          resolutionTo,
           history,
           interval,
         });
@@ -167,6 +179,7 @@ export default function App() {
       <Sidebar
         stats={stats}
         syncStatus={syncStatus}
+        tags={tags}
         onSync={startSync}
         onExport={() => window.open(api.exportUrl(), "_blank")}
       />

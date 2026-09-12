@@ -1,8 +1,11 @@
 import { useState } from "react";
 
-export default function Sidebar({ stats, syncStatus, onSync, onExport }) {
+export default function Sidebar({ stats, syncStatus, tags, onSync, onExport }) {
   const [limit, setLimit] = useState(500);
-  const [closed, setClosed] = useState(false);
+  const [status, setStatus] = useState("active");
+  const [tag, setTag] = useState("");
+  const [resolutionFrom, setResolutionFrom] = useState("");
+  const [resolutionTo, setResolutionTo] = useState("");
   const [history, setHistory] = useState(false);
   const [interval, setInterval_] = useState("max");
   const [delay, setDelay] = useState(0.15);
@@ -36,10 +39,44 @@ export default function Sidebar({ stats, syncStatus, onSync, onExport }) {
           />
         </div>
 
-        <label className="field-row">
-          <input type="checkbox" checked={closed} onChange={(e) => setClosed(e.target.checked)} />
-          Fetch closed markets instead of active
-        </label>
+        <div className="field">
+          <label htmlFor="status">Market status</label>
+          <select id="status" value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="active">Active only</option>
+            <option value="closed">Closed only</option>
+            <option value="all">All (active + closed)</option>
+          </select>
+        </div>
+
+        <div className="field">
+          <label htmlFor="sync-tag">Category / tag</label>
+          <select id="sync-tag" value={tag} onChange={(e) => setTag(e.target.value)}>
+            <option value="">Any tag</option>
+            {tags.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="field">
+          <label htmlFor="resolution-from">Resolves between</label>
+          <div className="field-pair">
+            <input
+              id="resolution-from"
+              type="date"
+              value={resolutionFrom}
+              onChange={(e) => setResolutionFrom(e.target.value)}
+            />
+            <input
+              id="resolution-to"
+              type="date"
+              value={resolutionTo}
+              onChange={(e) => setResolutionTo(e.target.value)}
+            />
+          </div>
+        </div>
 
         <label className="field-row">
           <input type="checkbox" checked={history} onChange={(e) => setHistory(e.target.checked)} />
@@ -69,7 +106,7 @@ export default function Sidebar({ stats, syncStatus, onSync, onExport }) {
             type="number"
             step={0.05}
             min={0}
-            max={1}
+            max={5}
             value={delay}
             onChange={(e) => setDelay(Number(e.target.value))}
             disabled={!history}
@@ -79,7 +116,9 @@ export default function Sidebar({ stats, syncStatus, onSync, onExport }) {
         <button
           className="btn"
           disabled={syncStatus.running}
-          onClick={() => onSync({ limit, closed, history, interval, delay })}
+          onClick={() =>
+            onSync({ limit, status, tag, resolutionFrom, resolutionTo, history, interval, delay })
+          }
         >
           {syncStatus.running ? "Syncing…" : "Run sync"}
         </button>

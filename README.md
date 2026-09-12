@@ -151,10 +151,13 @@ proxies `/api/*` requests to the Express server, so both need to be running.
 
 ## Using it
 
-- **Sidebar** — set how many markets to fetch, whether to pull closed markets
-  instead of active ones, and whether to also fetch price history (needed for
-  the min/max columns and the chart — it's slower, one extra API call per
-  market). Click **Run sync** and a progress bar tracks it live.
+- **Sidebar** — set how many markets to fetch; a market status filter (active
+  only, closed only, or both); a category/tag to scope the sync to (populated
+  from whatever's already been synced); a resolution date range to only sync
+  markets resolving in that window; and whether to also fetch price history
+  (needed for the min/max columns and the chart — it's slower, one extra API
+  call per market, with an editable delay between those calls to stay easy on
+  Polymarket's API). Click **Run sync** and a progress bar tracks it live.
 - **Table** — search by keyword, filter by status, sort by volume / liquidity
   / price / resolution date, filter by minimum volume, filter by price range
   (min/max current price), and filter by category/tag (populated from

@@ -57,6 +57,32 @@ export async function fetchMarketBySlug(slug) {
   return Array.isArray(data) && data.length ? data[0] : null;
 }
 
+/** Maps the sync UI's status selector to Gamma's active/closed query params.
+ * "all" passes null for both, which fetchMarketsPage omits from the query
+ * entirely — i.e. markets of any status. */
+export function resolveStatusFilter(status) {
+  if (status === "closed") return { active: false, closed: true };
+  if (status === "all") return { active: null, closed: null };
+  return { active: true, closed: false };
+}
+
+function endOfDay(dateStr) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? `${dateStr}T23:59:59.999Z` : dateStr;
+}
+
+/** True if a normalized market's resolution date falls within [from, to]
+ * (inclusive; either bound optional). A market with no resolution date is
+ * excluded whenever a bound is set, since membership can't be confirmed. */
+export function inResolutionRange(resolutionDate, from, to) {
+  if (!from && !to) return true;
+  if (!resolutionDate) return false;
+  const t = new Date(resolutionDate).getTime();
+  if (Number.isNaN(t)) return false;
+  if (from && t < new Date(from).getTime()) return false;
+  if (to && t > new Date(endOfDay(to)).getTime()) return false;
+  return true;
+}
+
 /** Async generator — paginates through the Gamma API, yielding raw market objects. */
 export async function* fetchAllMarkets({ maxMarkets = null, active = true, closed = false } = {}) {
   let offset = 0;
