@@ -24,6 +24,9 @@ export const api = {
   market: (slug) => fetch(`${BASE}/markets/${encodeURIComponent(slug)}`).then(handle),
   history: (slug, interval = "max") =>
     fetch(`${BASE}/markets/${encodeURIComponent(slug)}/history?interval=${interval}`).then(handle),
+  // Sibling markets under the same Polymarket event (e.g. other candidates
+  // in the same election), for the detail panel's "related markets" list.
+  related: (slug) => fetch(`${BASE}/markets/${encodeURIComponent(slug)}/related`).then(handle),
   tags: () => fetch(`${BASE}/tags`).then(handle),
   // Asks DeepSeek to analyze one market's real probability and background —
   // can take a while (up to a minute or so), so no client-side timeout here.
@@ -60,4 +63,15 @@ export const api = {
     }).then(handle),
   clearDeepSeekKey: () =>
     fetch(`${BASE}/settings/deepseek-key`, { method: "DELETE" }).then(handle),
+  // The DeepSeek analysis prompt template — user-editable, supports
+  // {slug}/{yes_price}/{no_price}/{end_date}/{liquidity} placeholders.
+  getPromptTemplate: () => fetch(`${BASE}/settings/deepseek-prompt`).then(handle),
+  setPromptTemplate: (template) =>
+    fetch(`${BASE}/settings/deepseek-prompt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ template }),
+    }).then(handle),
+  resetPromptTemplate: () =>
+    fetch(`${BASE}/settings/deepseek-prompt`, { method: "DELETE" }).then(handle),
 };

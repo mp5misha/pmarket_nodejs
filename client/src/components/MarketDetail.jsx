@@ -10,7 +10,11 @@ import {
 } from "recharts";
 import { api } from "../api.js";
 
-export default function MarketDetail({ market, onOpenSettings }) {
+function fmtRelatedPrice(v) {
+  return v === null || v === undefined ? "—" : Number(v).toFixed(3);
+}
+
+export default function MarketDetail({ market, onOpenSettings, onSelectRelated }) {
   const [history, setHistory] = useState(null);
   const [loadingHist, setLoadingHist] = useState(false);
   const [histError, setHistError] = useState(null);
@@ -19,12 +23,31 @@ export default function MarketDetail({ market, onOpenSettings }) {
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [analysisError, setAnalysisError] = useState(null);
 
+  const [related, setRelated] = useState([]);
+
   // Reset the chart and any AI analysis whenever a different market is selected
   useEffect(() => {
     setHistory(null);
     setHistError(null);
     setAnalysis(null);
     setAnalysisError(null);
+  }, [market.slug]);
+
+  // Other markets under the same Polymarket event (e.g. other candidates in
+  // the same election) — silently empty when the market isn't part of one.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .related(market.slug)
+      .then((rows) => {
+        if (!cancelled) setRelated(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setRelated([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [market.slug]);
 
   const loadHistory = async () => {
@@ -56,12 +79,19 @@ export default function MarketDetail({ market, onOpenSettings }) {
   return (
     <section className="detail">
       <h3>{market.question}</h3>
+      {market.event_title && <p className="event-note">Part of: {market.event_title}</p>}
 
       <div className="metrics">
         <div className="metric">
-          <div className="label">Current price</div>
+          <div className="label">Yes price</div>
           <div className="value">
             {market.current_price != null ? Number(market.current_price).toFixed(3) : "—"}
+          </div>
+        </div>
+        <div className="metric">
+          <div className="label">No price</div>
+          <div className="value">
+            {market.no_price != null ? Number(market.no_price).toFixed(3) : "—"}
           </div>
         </div>
         <div className="metric">
@@ -88,6 +118,24 @@ export default function MarketDetail({ market, onOpenSettings }) {
         <p className="range-note">
           Stored range: {Number(market.min_price).toFixed(3)} – {Number(market.max_price).toFixed(3)}
         </p>
+      )}
+
+      {related.length > 0 && (
+        <div className="related-markets">
+          <h4>Related markets in this event</h4>
+          <ul>
+            {related.map((r) => (
+              <li key={r.slug}>
+                <button className="link-button" onClick={() => onSelectRelated?.(r.slug)}>
+                  {r.question}
+                </button>
+                <span className="related-price">
+                  Yes {fmtRelatedPrice(r.current_price)} · No {fmtRelatedPrice(r.no_price)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {!history && (

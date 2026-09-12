@@ -20,7 +20,12 @@ export default function App() {
   const [tag, setTag] = useState("");
   const [tags, setTags] = useState([]);
 
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [totalMarkets, setTotalMarkets] = useState(0);
+
   const [selectedSlug, setSelectedSlug] = useState(null);
+  const [selectedMarket, setSelectedMarket] = useState(null);
   const [selectedSlugs, setSelectedSlugs] = useState(() => new Set());
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState(null);
@@ -57,7 +62,7 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const rows = await api.markets({
+      const result = await api.markets({
         search,
         status,
         sortBy,
@@ -65,8 +70,11 @@ export default function App() {
         minPrice: minPrice === "" ? undefined : minPrice,
         maxPrice: maxPrice === "" ? undefined : maxPrice,
         tag: tag || undefined,
+        page,
+        pageSize,
       });
-      setMarkets(rows);
+      setMarkets(result.rows);
+      setTotalMarkets(result.total);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -83,16 +91,44 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-query whenever a filter changes
+  // Any filter (or page size) change jumps back to page 1
+  useEffect(() => {
+    setPage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search, status, sortBy, minVolume, minPrice, maxPrice, tag, pageSize]);
+
+  // Re-query whenever a filter or the page changes
   useEffect(() => {
     refreshMarkets();
     setSelectedSlugs(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, status, sortBy, minVolume, minPrice, maxPrice, tag]);
+  }, [search, status, sortBy, minVolume, minPrice, maxPrice, tag, page, pageSize]);
 
   useEffect(() => () => {
     cancelRef.current = true;
   }, []);
+
+  // The selected market is fetched independently of the current page's rows
+  // — pagination or a filter change shouldn't lose the detail panel, and a
+  // related-market click can jump to a market that isn't on this page at all.
+  useEffect(() => {
+    if (!selectedSlug) {
+      setSelectedMarket(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .market(selectedSlug)
+      .then((m) => {
+        if (!cancelled) setSelectedMarket(m);
+      })
+      .catch(() => {
+        if (!cancelled) setSelectedMarket(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSlug]);
 
   const toggleSelectMarket = (slug) => {
     setSelectedSlugs((prev) => {
@@ -184,8 +220,6 @@ export default function App() {
     }
   };
 
-  const selected = markets.find((m) => m.slug === selectedSlug) || null;
-
   return (
     <div className="app">
       <Sidebar
@@ -255,14 +289,18 @@ export default function App() {
         {error && <p className="sync-error">{error}</p>}
         {refreshError && <p className="sync-error">{refreshError}</p>}
 
-        {!loading && markets.length === 0 ? (
+        {!loading && totalMarkets === 0 ? (
           <div className="empty-state">
             No markets stored yet. Use <strong>Run sync</strong> in the sidebar to fetch from Polymarket.
           </div>
         ) : (
           <>
             <div className="toolbar">
-              <p className="result-count">{markets.length} markets</p>
+              <p className="result-count">
+                {totalMarkets === 0
+                  ? "0 markets"
+                  : `Showing ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, totalMarkets)} of ${totalMarkets} markets`}
+              </p>
               <div className="bulk-actions">
                 <span className="selected-count">{selectedSlugs.size} selected</span>
                 <button
@@ -282,11 +320,40 @@ export default function App() {
               onToggleSelect={toggleSelectMarket}
               onToggleSelectAll={toggleSelectAllMarkets}
             />
+            <div className="pagination">
+              <select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>
+                <option value={25}>25 / page</option>
+                <option value={50}>50 / page</option>
+                <option value={100}>100 / page</option>
+                <option value={200}>200 / page</option>
+              </select>
+              <button
+                className="btn btn-ghost btn-small"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                ← Prev
+              </button>
+              <span className="page-indicator">
+                Page {page} of {Math.max(1, Math.ceil(totalMarkets / pageSize))}
+              </span>
+              <button
+                className="btn btn-ghost btn-small"
+                disabled={page >= Math.ceil(totalMarkets / pageSize)}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next →
+              </button>
+            </div>
           </>
         )}
 
-        {selected && (
-          <MarketDetail market={selected} onOpenSettings={() => setSettingsOpen(true)} />
+        {selectedMarket && (
+          <MarketDetail
+            market={selectedMarket}
+            onOpenSettings={() => setSettingsOpen(true)}
+            onSelectRelated={setSelectedSlug}
+          />
         )}
       </main>
 

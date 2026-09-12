@@ -146,6 +146,19 @@ function extractTags(raw) {
   return [...labels];
 }
 
+/** A market belongs to at most one Polymarket "event" in practice (Gamma's
+ * schema allows an array, but multi-event markets aren't a real case we've
+ * seen) — that event is what groups sibling markets together (e.g. each
+ * candidate in an election is its own market under one election event). */
+function extractEvent(raw) {
+  const ev = Array.isArray(raw.events) && raw.events.length ? raw.events[0] : null;
+  return {
+    eventId: ev?.id ?? null,
+    eventSlug: ev?.slug ?? null,
+    eventTitle: ev?.title ?? null,
+  };
+}
+
 /** Turns one raw Gamma API market object into our flat storage shape. */
 export function normalizeMarket(raw) {
   const outcomes = parseJsonField(raw.outcomes, []);
@@ -164,6 +177,15 @@ export function normalizeMarket(raw) {
     yesTokenId = tokenIds[0] ?? null;
   }
 
+  let noPrice = null;
+  const noIdx = outcomes.findIndex((o) => String(o).trim().toLowerCase() === "no");
+  if (noIdx !== -1) {
+    if (noIdx < prices.length) noPrice = safeFloat(prices[noIdx]);
+  } else if (prices.length > 1) {
+    // Non-binary / unlabeled market: fall back to the second outcome
+    noPrice = safeFloat(prices[1]);
+  }
+
   return {
     slug: raw.slug ?? null,
     marketId: raw.id ?? null,
@@ -172,6 +194,7 @@ export function normalizeMarket(raw) {
     outcomes,
     outcomePrices: prices,
     currentPrice: yesPrice,
+    noPrice,
     yesTokenId,
     volume: safeFloat(raw.volume),
     liquidity: safeFloat(raw.liquidity),
@@ -179,5 +202,6 @@ export function normalizeMarket(raw) {
     active: Boolean(raw.active),
     closed: Boolean(raw.closed),
     tags: extractTags(raw),
+    ...extractEvent(raw),
   };
 }

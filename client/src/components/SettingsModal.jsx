@@ -1,12 +1,20 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 
+const PROMPT_VARIABLES = ["slug", "yes_price", "no_price", "end_date", "liquidity"];
+
 export default function SettingsModal({ onClose, onStatusChange }) {
   const [status, setStatus] = useState(null);
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [note, setNote] = useState(null);
+
+  const [promptStatus, setPromptStatus] = useState(null);
+  const [promptDraft, setPromptDraft] = useState("");
+  const [savingPrompt, setSavingPrompt] = useState(false);
+  const [promptError, setPromptError] = useState(null);
+  const [promptNote, setPromptNote] = useState(null);
 
   const refreshStatus = async () => {
     try {
@@ -18,8 +26,19 @@ export default function SettingsModal({ onClose, onStatusChange }) {
     }
   };
 
+  const refreshPrompt = async () => {
+    try {
+      const p = await api.getPromptTemplate();
+      setPromptStatus(p);
+      setPromptDraft(p.template);
+    } catch (err) {
+      setPromptError(err.message);
+    }
+  };
+
   useEffect(() => {
     refreshStatus();
+    refreshPrompt();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -54,6 +73,38 @@ export default function SettingsModal({ onClose, onStatusChange }) {
       setError(err.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const savePrompt = async () => {
+    if (!promptDraft.trim()) return;
+    setSavingPrompt(true);
+    setPromptError(null);
+    setPromptNote(null);
+    try {
+      const p = await api.setPromptTemplate(promptDraft);
+      setPromptStatus(p);
+      setPromptNote("Prompt saved.");
+    } catch (err) {
+      setPromptError(err.message);
+    } finally {
+      setSavingPrompt(false);
+    }
+  };
+
+  const resetPrompt = async () => {
+    setSavingPrompt(true);
+    setPromptError(null);
+    setPromptNote(null);
+    try {
+      const p = await api.resetPromptTemplate();
+      setPromptStatus(p);
+      setPromptDraft(p.template);
+      setPromptNote("Reset to the default prompt.");
+    } catch (err) {
+      setPromptError(err.message);
+    } finally {
+      setSavingPrompt(false);
     }
   };
 
@@ -106,6 +157,48 @@ export default function SettingsModal({ onClose, onStatusChange }) {
             )}
             <button className="btn" onClick={save} disabled={saving || !apiKey.trim()}>
               {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
+
+          <hr className="modal-divider" />
+
+          <p className="settings-label">DeepSeek analysis prompt</p>
+          {promptStatus && (
+            <p className="settings-status">{promptStatus.isDefault ? "Using the default prompt" : "Custom prompt"}</p>
+          )}
+
+          <textarea
+            className="prompt-textarea"
+            rows={7}
+            value={promptDraft}
+            onChange={(e) => setPromptDraft(e.target.value)}
+          />
+
+          <p className="settings-hint">
+            Sent to DeepSeek when you click "Analyze with DeepSeek" on a market. Insert any of
+            these variables and they'll be filled in from the selected market:{" "}
+            {PROMPT_VARIABLES.map((v, i) => (
+              <span key={v}>
+                <code>{`{${v}}`}</code>
+                {i < PROMPT_VARIABLES.length - 1 ? ", " : ""}
+              </span>
+            ))}
+            .
+          </p>
+
+          {promptError && <p className="sync-error">{promptError}</p>}
+          {promptNote && <p className="settings-note">{promptNote}</p>}
+
+          <div className="modal-actions">
+            <button className="btn btn-ghost" onClick={resetPrompt} disabled={savingPrompt}>
+              Reset to default
+            </button>
+            <button
+              className="btn"
+              onClick={savePrompt}
+              disabled={savingPrompt || !promptDraft.trim()}
+            >
+              {savingPrompt ? "Saving…" : "Save prompt"}
             </button>
           </div>
         </div>

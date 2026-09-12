@@ -56,8 +56,10 @@ export default function MarketTable({
             />
           </th>
           <th>Market</th>
+          <th>Event</th>
           <th>Tags</th>
-          <th className="num">Price</th>
+          <th className="num">Yes price</th>
+          <th className="num">No price</th>
           <th className="num">Min</th>
           <th className="num">Max</th>
           <th className="num">Volume</th>
@@ -83,6 +85,7 @@ export default function MarketTable({
               <div className="q-title">{m.question}</div>
               <div className="q-slug">{m.slug}</div>
             </td>
+            <td className="event-cell">{m.event_title || "—"}</td>
             <td className="tags-cell">
               {parseTags(m.tags).map((t) => (
                 <span className="tag-badge" key={t}>
@@ -91,6 +94,7 @@ export default function MarketTable({
               ))}
             </td>
             <td className="num">{fmtPrice(m.current_price)}</td>
+            <td className="num">{fmtPrice(m.no_price)}</td>
             <td className="num">{fmtPrice(m.min_price)}</td>
             <td className="num">{fmtPrice(m.max_price)}</td>
             <td className="num">{fmtMoney(m.volume)}</td>

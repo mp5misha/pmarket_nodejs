@@ -7,6 +7,7 @@ import {
   getDb,
   queryMarkets,
   getMarket,
+  getMarketsByEvent,
   getStats,
   getAllForExport,
   getTags,
@@ -17,11 +18,12 @@ import {
 } from "./db.js";
 import { fetchPriceHistory } from "./polymarket.js";
 import { runSyncStep, refreshMarketPrices } from "./sync.js";
-import { analyzeMarket } from "./deepseek.js";
+import { analyzeMarket, DEFAULT_PROMPT_TEMPLATE } from "./deepseek.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
 const DEEPSEEK_KEY_SETTING = "deepseek_api_key";
+const DEEPSEEK_PROMPT_SETTING = "deepseek_prompt_template";
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -35,13 +37,18 @@ function deepseekKeyStatus() {
   return { configured: false, source: "none" };
 }
 
+function deepseekPromptStatus() {
+  const stored = getSetting(getDb(DEFAULT_DB_PATH), DEEPSEEK_PROMPT_SETTING);
+  return { template: stored || DEFAULT_PROMPT_TEMPLATE, isDefault: !stored };
+}
+
 app.get("/api/stats", (req, res) => {
   res.json(getStats(getDb(DEFAULT_DB_PATH)));
 });
 
 app.get("/api/markets", (req, res) => {
-  const { search, status, sortBy, minVolume, minPrice, maxPrice, tag } = req.query;
-  const rows = queryMarkets(getDb(DEFAULT_DB_PATH), {
+  const { search, status, sortBy, minVolume, minPrice, maxPrice, tag, page, pageSize } = req.query;
+  const result = queryMarkets(getDb(DEFAULT_DB_PATH), {
     search,
     status,
     sortBy,
@@ -49,8 +56,10 @@ app.get("/api/markets", (req, res) => {
     minPrice: minPrice !== undefined && minPrice !== "" ? Number(minPrice) : null,
     maxPrice: maxPrice !== undefined && maxPrice !== "" ? Number(maxPrice) : null,
     tag: tag || undefined,
+    page: page ? Number(page) : 1,
+    pageSize: pageSize ? Number(pageSize) : 50,
   });
-  res.json(rows);
+  res.json(result);
 });
 
 app.get("/api/tags", (req, res) => {
@@ -79,12 +88,22 @@ app.get("/api/markets/:slug/history", async (req, res) => {
   }
 });
 
+app.get("/api/markets/:slug/related", (req, res) => {
+  const db = getDb(DEFAULT_DB_PATH);
+  const row = getMarket(db, req.params.slug);
+  if (!row) return res.status(404).json({ error: "Market not found" });
+  if (!row.event_id) return res.json([]);
+  res.json(getMarketsByEvent(db, row.event_id, row.slug));
+});
+
 app.post("/api/markets/:slug/analyze", async (req, res) => {
-  const row = getMarket(getDb(DEFAULT_DB_PATH), req.params.slug);
+  const db = getDb(DEFAULT_DB_PATH);
+  const row = getMarket(db, req.params.slug);
   if (!row) return res.status(404).json({ error: "Market not found" });
   try {
-    const apiKey = getSetting(getDb(DEFAULT_DB_PATH), DEEPSEEK_KEY_SETTING);
-    const analysis = await analyzeMarket(row.slug, { apiKey });
+    const apiKey = getSetting(db, DEEPSEEK_KEY_SETTING);
+    const promptTemplate = getSetting(db, DEEPSEEK_PROMPT_SETTING);
+    const analysis = await analyzeMarket(row, { apiKey, promptTemplate });
     res.status(200).json({ analysis });
   } catch (err) {
     res.status(502).json({ error: String(err.message ?? err) });
@@ -107,6 +126,24 @@ app.post("/api/settings/deepseek-key", (req, res) => {
 app.delete("/api/settings/deepseek-key", (req, res) => {
   deleteSetting(getDb(DEFAULT_DB_PATH), DEEPSEEK_KEY_SETTING);
   res.status(200).json(deepseekKeyStatus());
+});
+
+app.get("/api/settings/deepseek-prompt", (req, res) => {
+  res.json(deepseekPromptStatus());
+});
+
+app.post("/api/settings/deepseek-prompt", (req, res) => {
+  const { template } = req.body || {};
+  if (typeof template !== "string" || !template.trim()) {
+    return res.status(400).json({ error: "template is required" });
+  }
+  setSetting(getDb(DEFAULT_DB_PATH), DEEPSEEK_PROMPT_SETTING, template);
+  res.status(200).json(deepseekPromptStatus());
+});
+
+app.delete("/api/settings/deepseek-prompt", (req, res) => {
+  deleteSetting(getDb(DEFAULT_DB_PATH), DEEPSEEK_PROMPT_SETTING);
+  res.status(200).json(deepseekPromptStatus());
 });
 
 app.get("/api/export", (req, res) => {

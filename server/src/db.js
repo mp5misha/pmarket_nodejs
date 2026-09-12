@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS markets (
   outcomes        TEXT,
   outcome_prices  TEXT,
   current_price   REAL,
+  no_price        REAL,
   min_price       REAL,
   max_price       REAL,
   volume          REAL,
@@ -23,10 +24,14 @@ CREATE TABLE IF NOT EXISTS markets (
   closed          INTEGER,
   yes_token_id    TEXT,
   tags            TEXT,
+  event_id        TEXT,
+  event_slug      TEXT,
+  event_title     TEXT,
   last_updated    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_markets_volume ON markets(volume);
 CREATE INDEX IF NOT EXISTS idx_markets_resolution ON markets(resolution_date);
+CREATE INDEX IF NOT EXISTS idx_markets_event ON markets(event_id);
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT
@@ -42,25 +47,30 @@ export function getDb(dbPath = DEFAULT_DB_PATH) {
   if (dbInstance) dbInstance.close();
   dbInstance = new Database(dbPath);
   dbInstance.exec(SCHEMA);
-  // `tags` was added after the initial schema — CREATE TABLE IF NOT EXISTS
-  // won't retrofit it onto a database file created before this change.
+  // Columns added after the initial schema — CREATE TABLE IF NOT EXISTS won't
+  // retrofit them onto a database file created before each change.
   const columns = dbInstance.prepare("PRAGMA table_info(markets)").all().map((c) => c.name);
-  if (!columns.includes("tags")) {
-    dbInstance.exec("ALTER TABLE markets ADD COLUMN tags TEXT");
-  }
+  const addColumnIfMissing = (name, ddl) => {
+    if (!columns.includes(name)) dbInstance.exec(`ALTER TABLE markets ADD COLUMN ${ddl}`);
+  };
+  addColumnIfMissing("tags", "tags TEXT");
+  addColumnIfMissing("no_price", "no_price REAL");
+  addColumnIfMissing("event_id", "event_id TEXT");
+  addColumnIfMissing("event_slug", "event_slug TEXT");
+  addColumnIfMissing("event_title", "event_title TEXT");
   dbInstancePath = dbPath;
   return dbInstance;
 }
 
 const UPSERT_SQL = `
 INSERT INTO markets (slug, market_id, condition_id, question, outcomes,
-                      outcome_prices, current_price, min_price, max_price,
+                      outcome_prices, current_price, no_price, min_price, max_price,
                       volume, liquidity, resolution_date, active, closed,
-                      yes_token_id, tags, last_updated)
+                      yes_token_id, tags, event_id, event_slug, event_title, last_updated)
 VALUES (@slug, @market_id, @condition_id, @question, @outcomes,
-        @outcome_prices, @current_price, @min_price, @max_price,
+        @outcome_prices, @current_price, @no_price, @min_price, @max_price,
         @volume, @liquidity, @resolution_date, @active, @closed,
-        @yes_token_id, @tags, @last_updated)
+        @yes_token_id, @tags, @event_id, @event_slug, @event_title, @last_updated)
 ON CONFLICT(slug) DO UPDATE SET
   market_id=excluded.market_id,
   condition_id=excluded.condition_id,
@@ -68,6 +78,7 @@ ON CONFLICT(slug) DO UPDATE SET
   outcomes=excluded.outcomes,
   outcome_prices=excluded.outcome_prices,
   current_price=excluded.current_price,
+  no_price=excluded.no_price,
   min_price=COALESCE(excluded.min_price, markets.min_price),
   max_price=COALESCE(excluded.max_price, markets.max_price),
   volume=excluded.volume,
@@ -77,6 +88,9 @@ ON CONFLICT(slug) DO UPDATE SET
   closed=excluded.closed,
   yes_token_id=COALESCE(excluded.yes_token_id, markets.yes_token_id),
   tags=excluded.tags,
+  event_id=excluded.event_id,
+  event_slug=excluded.event_slug,
+  event_title=excluded.event_title,
   last_updated=excluded.last_updated
 `;
 
@@ -90,6 +104,7 @@ export function upsertMarket(db, market, { minPrice = null, maxPrice = null } = 
     outcomes: JSON.stringify(market.outcomes ?? []),
     outcome_prices: JSON.stringify(market.outcomePrices ?? []),
     current_price: market.currentPrice ?? null,
+    no_price: market.noPrice ?? null,
     min_price: minPrice,
     max_price: maxPrice,
     volume: market.volume ?? null,
@@ -99,15 +114,30 @@ export function upsertMarket(db, market, { minPrice = null, maxPrice = null } = 
     closed: market.closed ? 1 : 0,
     yes_token_id: market.yesTokenId ?? null,
     tags: JSON.stringify(market.tags ?? []),
+    event_id: market.eventId ?? null,
+    event_slug: market.eventSlug ?? null,
+    event_title: market.eventTitle ?? null,
     last_updated: new Date().toISOString(),
   });
 }
 
 const SORTABLE = new Set(["volume", "liquidity", "current_price", "resolution_date"]);
 
+/** Returns { rows, total, page, pageSize } — `total` is the count matching
+ * the filters across all pages, for the grid's pagination controls. */
 export function queryMarkets(
   db,
-  { search, status, sortBy = "volume", minVolume = 0, minPrice, maxPrice, tag } = {}
+  {
+    search,
+    status,
+    sortBy = "volume",
+    minVolume = 0,
+    minPrice,
+    maxPrice,
+    tag,
+    page = 1,
+    pageSize = 50,
+  } = {}
 ) {
   const clauses = [];
   const params = {};
@@ -135,8 +165,28 @@ export function queryMarkets(
   }
   const sortCol = SORTABLE.has(sortBy) ? sortBy : "volume";
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  const sql = `SELECT * FROM markets ${where} ORDER BY ${sortCol} DESC NULLS LAST`;
-  return db.prepare(sql).all(params);
+
+  const total = db.prepare(`SELECT COUNT(*) AS count FROM markets ${where}`).get(params).count;
+
+  const pageSizeSafe = Math.max(1, Math.min(500, pageSize));
+  const pageSafe = Math.max(1, page);
+  const offset = (pageSafe - 1) * pageSizeSafe;
+  const sql = `SELECT * FROM markets ${where} ORDER BY ${sortCol} DESC NULLS LAST LIMIT @pageSize OFFSET @offset`;
+  const rows = db.prepare(sql).all({ ...params, pageSize: pageSizeSafe, offset });
+
+  return { rows, total, page: pageSafe, pageSize: pageSizeSafe };
+}
+
+/** Sibling markets under the same Polymarket event (e.g. other candidates in
+ * the same election), for the detail panel's "related markets" list. */
+export function getMarketsByEvent(db, eventId, excludeSlug) {
+  return db
+    .prepare(
+      `SELECT slug, question, current_price, no_price, volume
+       FROM markets WHERE event_id = ? AND slug != ?
+       ORDER BY volume DESC NULLS LAST`
+    )
+    .all(eventId, excludeSlug);
 }
 
 /** Distinct tag labels across all stored markets, sorted, for the category filter dropdown. */

@@ -197,6 +197,14 @@ button {
   color: var(--sidebar-text);
 }
 
+/* .btn-ghost defaults to light text for the dark sidebar; the settings
+ * modal sits on the light panel background, so it needs dark-appropriate
+ * colors instead. */
+.modal .btn-ghost {
+  border-color: var(--rule);
+  color: var(--ink-soft);
+}
+
 .progress-track {
   height: 4px;
   background: rgba(255, 255, 255, 0.12);
@@ -296,6 +304,31 @@ button {
   font-size: 12.5px;
 }
 
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.pagination select {
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  border-radius: 4px;
+  padding: 7px 9px;
+  font-size: 12.5px;
+  font-family: var(--font-sans);
+  color: var(--ink);
+}
+
+.page-indicator {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
 table.ledger {
   width: 100%;
   border-collapse: collapse;
@@ -350,6 +383,12 @@ table.ledger tbody tr.selected {
   max-width: 440px;
 }
 
+.event-cell {
+  max-width: 180px;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+}
+
 .tags-cell {
   max-width: 200px;
 }
@@ -387,13 +426,20 @@ table.ledger tbody tr.selected {
   font-family: var(--font-serif);
   font-size: 19px;
   font-weight: 600;
-  margin: 0 0 18px;
+  margin: 0 0 4px;
+}
+
+.event-note {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  margin: 0;
 }
 
 .metrics {
   display: flex;
   gap: 34px;
   flex-wrap: wrap;
+  margin-top: 14px;
   margin-bottom: 14px;
 }
 
@@ -413,6 +459,48 @@ table.ledger tbody tr.selected {
   font-size: 12.5px;
   color: var(--ink-soft);
   margin: 0 0 16px;
+}
+
+.related-markets {
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+
+.related-markets h4 {
+  font-family: var(--font-serif);
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+.related-markets ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.related-markets li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12.5px;
+}
+
+.related-markets .link-button {
+  text-align: left;
+}
+
+.related-price {
+  color: var(--ink-soft);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .ai-analysis {
@@ -535,6 +623,34 @@ table.ledger tbody tr.selected {
   color: var(--ink);
   margin: 6px 0 10px;
   width: 100%;
+}
+
+.modal-divider {
+  border: none;
+  border-top: 1px solid var(--rule);
+  margin: 20px 0;
+}
+
+.prompt-textarea {
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  border-radius: 4px;
+  padding: 9px 10px;
+  font-size: 12.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--ink);
+  margin: 6px 0 10px;
+  width: 100%;
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.settings-hint code {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 11.5px;
 }
 
 .modal-actions {

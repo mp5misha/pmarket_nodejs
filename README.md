@@ -165,33 +165,50 @@ proxies `/api/*` requests to the Express server, so both need to be running.
 - **Table** — search by keyword, filter by status, sort by volume / liquidity
   / price / resolution date, filter by minimum volume, filter by price range
   (min/max current price), and filter by category/tag (populated from
-  whatever's been synced). Click any row to open its detail panel below.
+  whatever's been synced). Shows the Yes and No price in separate columns,
+  which Polymarket event (if any) a market belongs to, and is paginated (25
+  /50/100/200 rows per page) once you've synced more than a page's worth.
+  Click any row to open its detail panel below.
 - **Bulk price update** — check one or more rows, then click **Update
   selected prices** to re-fetch just those markets' current price, volume,
   and liquidity from Polymarket without re-running a full sync. Any
   previously-computed min/max and CLOB token id are left untouched.
-- **Detail panel** — full metrics, a **Load price history chart** button
-  that fetches that market's complete price history on demand and plots it,
-  and an **Analyze with DeepSeek** button (see below).
+- **Detail panel** — Yes/No price, volume, liquidity, resolution date, a
+  **Related markets in this event** list (other markets sharing the same
+  Polymarket event, e.g. other candidates in the same election — click one
+  to jump straight to it), a **Load price history chart** button, and an
+  **Analyze with DeepSeek** button (see below).
 - **Export CSV** in the sidebar downloads everything currently stored.
 
 ## AI analysis (DeepSeek)
 
 Selecting a market and clicking **Analyze with DeepSeek** in its detail panel
-sends this prompt to DeepSeek's chat completions API and displays the reply:
+sends a prompt to DeepSeek's chat completions API and displays the reply. The
+default prompt:
 
 > Could you please analyze the real probability and analyze all the
 > background information available for the following event at Polymarket:
-> `{market slug}`
+> `{slug}`
+>
+> Market data:
+> - YES price: `{yes_price}`
+> - NO price: `{no_price}`
+> - Resolution date: `{end_date}`
+> - Liquidity: `{liquidity}`
+
+The prompt is fully editable from the ⚙ **Settings** window — write whatever
+you want and use any of the `{slug}`, `{yes_price}`, `{no_price}`,
+`{end_date}`, `{liquidity}` placeholders anywhere in it; each is filled in
+from the selected market when you click **Analyze with DeepSeek**. Click
+**Save prompt** to store your version, or **Reset to default** to go back.
 
 This needs a DeepSeek API key (get one at
 [platform.deepseek.com](https://platform.deepseek.com)). Set it up either way:
 
-- **In the app** — click the ⚙ **Settings** button at the top of the sidebar
-  (it shows a red dot when no key is configured), paste the key, and click
-  **Save**. It's stored in the app's own database (SQLite locally, Postgres
-  on Vercel) — no redeploy or restart needed, and it survives them. Use
-  **Clear saved key** to remove it.
+- **In the app** — open ⚙ **Settings** (it shows a red dot when no key is
+  configured), paste the key, and click **Save**. It's stored in the app's
+  own database (SQLite locally, Postgres on Vercel) — no redeploy or restart
+  needed, and it survives them. Use **Clear saved key** to remove it.
 - **As an environment variable** — `DEEPSEEK_API_KEY`, set wherever the API
   runs (`export DEEPSEEK_API_KEY=sk-...` locally before `npm start`; under
   the service's environment variables on Render/Railway; under **Settings →
