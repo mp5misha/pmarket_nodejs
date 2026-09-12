@@ -69,15 +69,10 @@ export function buildAnalysisPrompt(market, template = DEFAULT_PROMPT_TEMPLATE) 
     .replaceAll("{liquidity}", fmtMoney(market.liquidity));
 }
 
-/** Sends the analysis prompt for one market to DeepSeek's (OpenAI-compatible)
- * chat completions API and returns the reply plus token usage. `apiKey` and
- * `promptTemplate`, when given (saved via the app's settings window), take
- * precedence over DEEPSEEK_API_KEY and the built-in default template.
- * `model`/`reasoningEffort` default to DEFAULT_MODEL/DEFAULT_REASONING_EFFORT. */
-export async function analyzeMarket(
-  market,
-  { apiKey, promptTemplate, model, reasoningEffort } = {}
-) {
+/** Shared chat-completions call used by both a fresh analysis (a single user
+ * message) and a follow-up (the reconstructed thread plus the new
+ * question) — everything except the `messages` array is identical. */
+async function callChatCompletions(messages, { apiKey, model, reasoningEffort } = {}) {
   const key = apiKey || process.env.DEEPSEEK_API_KEY;
   if (!key) {
     throw new Error(
@@ -86,7 +81,6 @@ export async function analyzeMarket(
   }
   const chosenModel = model || DEFAULT_MODEL;
   const effort = reasoningEffort || DEFAULT_REASONING_EFFORT;
-  const prompt = buildAnalysisPrompt(market, promptTemplate || DEFAULT_PROMPT_TEMPLATE);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -100,7 +94,7 @@ export async function analyzeMarket(
       },
       body: JSON.stringify({
         model: chosenModel,
-        messages: [{ role: "user", content: prompt }],
+        messages,
         stream: false,
         reasoning_effort: effort,
       }),
@@ -128,11 +122,39 @@ export async function analyzeMarket(
   const usage = data?.usage || {};
   return {
     content,
-    promptText: prompt,
     model: chosenModel,
     reasoningEffort: effort,
     promptTokens: usage.prompt_tokens ?? null,
     completionTokens: usage.completion_tokens ?? null,
     tokensUsed: usage.total_tokens ?? null,
   };
+}
+
+/** Sends the analysis prompt for one market to DeepSeek's (OpenAI-compatible)
+ * chat completions API and returns the reply plus token usage. `apiKey` and
+ * `promptTemplate`, when given (saved via the app's settings window), take
+ * precedence over DEEPSEEK_API_KEY and the built-in default template.
+ * `model`/`reasoningEffort` default to DEFAULT_MODEL/DEFAULT_REASONING_EFFORT. */
+export async function analyzeMarket(
+  market,
+  { apiKey, promptTemplate, model, reasoningEffort } = {}
+) {
+  const prompt = buildAnalysisPrompt(market, promptTemplate || DEFAULT_PROMPT_TEMPLATE);
+  const result = await callChatCompletions([{ role: "user", content: prompt }], {
+    apiKey,
+    model,
+    reasoningEffort,
+  });
+  return { ...result, promptText: prompt };
+}
+
+/** Continues an existing analysis thread (Phase 4) — `threadMessages` is the
+ * reconstructed user/assistant history (see db.getAnalysisThread), and
+ * `followUpText` is the new question appended as the final user turn. */
+export async function askFollowUp(threadMessages, followUpText, { apiKey, model, reasoningEffort } = {}) {
+  return callChatCompletions([...threadMessages, { role: "user", content: followUpText }], {
+    apiKey,
+    model,
+    reasoningEffort,
+  });
 }

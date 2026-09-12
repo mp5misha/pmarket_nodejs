@@ -41,15 +41,50 @@ export const api = {
   // Without force, a completed analysis with identical inputs (market +
   // prompt + model + reasoning effort) is served from history instead of
   // billing DeepSeek again; force: true always creates a new record.
-  analyzeMarket: (slug, { force = false } = {}) =>
+  analyzeMarket: (slug, { force = false, templateId } = {}) =>
     fetch(`${BASE}/markets/${encodeURIComponent(slug)}/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ force }),
+      body: JSON.stringify({ force, templateId }),
     }).then(handle),
   // Full history of past analyses for one market (Phase 3), newest first.
   listAnalyses: (slug) => fetch(`${BASE}/markets/${encodeURIComponent(slug)}/analyses`).then(handle),
   getAnalysis: (id) => fetch(`${BASE}/analyses/${id}`).then(handle),
+  // Follow-up prompts layered on a stored analysis (Phase 4) — DeepSeek gets
+  // the whole reconstructed thread as context, always creates a new record.
+  followUpAnalysis: (id, text) =>
+    fetch(`${BASE}/analyses/${id}/follow-up`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    }).then(handle),
+  // Reusable prompt templates (Phase 4). Express/SQLite only — callers
+  // should treat rejection as "feature unavailable here", same as
+  // saved searches/fetch runs.
+  listPromptTemplates: () => fetch(`${BASE}/prompt-templates`).then(handle),
+  createPromptTemplate: (params) =>
+    fetch(`${BASE}/prompt-templates`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    }).then(handle),
+  updatePromptTemplate: (id, params) =>
+    fetch(`${BASE}/prompt-templates/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    }).then(handle),
+  deletePromptTemplate: (id) =>
+    fetch(`${BASE}/prompt-templates/${id}`, { method: "DELETE" }).then((res) => {
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+    }),
+  getDefaultPromptTemplate: () => fetch(`${BASE}/settings/default-prompt-template`).then(handle),
+  setDefaultPromptTemplate: (templateId) =>
+    fetch(`${BASE}/settings/default-prompt-template`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ templateId }),
+    }).then(handle),
   // Bulk-refreshes current price/volume/liquidity for the given slugs from
   // Polymarket, in place of a full sync — used by the table's "Update
   // selected" action.

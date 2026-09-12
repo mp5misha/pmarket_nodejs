@@ -644,10 +644,51 @@ table.ledger tbody tr.highlighted-row:hover {
   flex: 1;
 }
 
+.ai-analysis-template-picker {
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12.5px;
+  color: var(--ink);
+  max-width: 160px;
+}
+
 .ai-analysis-meta {
   margin: 10px 0 0;
   font-size: 12px;
   color: var(--ink-soft);
+}
+
+.ai-analysis-turn-label {
+  margin: 16px 0 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ai-analysis-followup {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--rule);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ai-analysis-followup textarea {
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: var(--font-sans);
+  color: var(--ink);
+  resize: vertical;
+}
+
+.ai-analysis-followup .btn {
+  align-self: flex-start;
 }
 
 .ai-analysis-text {

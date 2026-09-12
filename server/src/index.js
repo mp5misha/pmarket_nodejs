@@ -30,12 +30,19 @@ import {
   createAnalysis,
   getAnalysis,
   listAnalysesForMarket,
+  getAnalysisThread,
+  listPromptTemplates,
+  getPromptTemplate,
+  createPromptTemplate,
+  updatePromptTemplate,
+  deletePromptTemplate,
   DEFAULT_DB_PATH,
 } from "./db.js";
 import { fetchPriceHistory } from "./polymarket.js";
 import { runSyncStep, refreshMarketPrices, runFullSync } from "./sync.js";
 import {
   analyzeMarket,
+  askFollowUp,
   buildAnalysisPrompt,
   DEFAULT_PROMPT_TEMPLATE,
   AVAILABLE_MODELS,
@@ -51,6 +58,7 @@ const DEEPSEEK_KEY_SETTING = "deepseek_api_key";
 const DEEPSEEK_PROMPT_SETTING = "deepseek_prompt_template";
 const DEEPSEEK_MODEL_SETTING = "deepseek_model";
 const DEEPSEEK_EFFORT_SETTING = "deepseek_reasoning_effort";
+const DEFAULT_TEMPLATE_ID_SETTING = "default_prompt_template_id";
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -157,21 +165,42 @@ app.get("/api/markets/:slug/related", (req, res) => {
   res.json(getMarketsByEvent(db, row.event_id, row.slug));
 });
 
+/** Resolves which prompt template text to use for a fresh analysis: an
+ * explicit templateId from the request, else the saved default template,
+ * else the built-in constant (e.g. before any template has been created,
+ * or on the Vercel deploy where prompt_templates doesn't exist). */
+function resolvePromptTemplate(db, templateId) {
+  if (templateId) {
+    const template = getPromptTemplate(db, templateId);
+    if (!template) throw Object.assign(new Error("Unknown prompt template"), { status: 400 });
+    return template;
+  }
+  const defaultId = getSetting(db, DEFAULT_TEMPLATE_ID_SETTING);
+  if (defaultId) {
+    const template = getPromptTemplate(db, defaultId);
+    if (template) return template;
+  }
+  return null;
+}
+
 // Phase 3: persisted analysis history with caching by input_hash (market +
 // prompt + model + reasoning effort). A plain "Analyze" reuses a completed
 // result for the same inputs instead of re-billing DeepSeek; "Re-run"
 // (force: true) always calls DeepSeek again and stores a new row, even if
 // the inputs are identical to a previous one.
+// Phase 4: a reusable, named prompt template (see resolvePromptTemplate)
+// replaces Phase 3's single settings-stored prompt string.
 app.post("/api/markets/:slug/analyze", async (req, res) => {
   const db = getDb(DEFAULT_DB_PATH);
   const row = getMarket(db, req.params.slug);
   if (!row) return res.status(404).json({ error: "Market not found" });
-  const { force = false } = req.body || {};
+  const { force = false, templateId } = req.body || {};
   try {
     const apiKey = getSetting(db, DEEPSEEK_KEY_SETTING);
-    const promptTemplate = getSetting(db, DEEPSEEK_PROMPT_SETTING) || DEFAULT_PROMPT_TEMPLATE;
+    const template = resolvePromptTemplate(db, templateId);
+    const promptTemplateText = template?.template || DEFAULT_PROMPT_TEMPLATE;
     const { model, reasoningEffort } = deepseekModelStatus();
-    const promptText = buildAnalysisPrompt(row, promptTemplate);
+    const promptText = buildAnalysisPrompt(row, promptTemplateText);
     const inputHash = computeInputHash({ marketSlug: row.slug, promptText, modelName: model, reasoningEffort });
 
     if (!force) {
@@ -179,10 +208,11 @@ app.post("/api/markets/:slug/analyze", async (req, res) => {
       if (cached) return res.status(200).json({ analysis: cached, cached: true });
     }
 
-    const result = await analyzeMarket(row, { apiKey, promptTemplate, model, reasoningEffort });
+    const result = await analyzeMarket(row, { apiKey, promptTemplate: promptTemplateText, model, reasoningEffort });
     const costEstimate = estimateCost(model, result.promptTokens, result.completionTokens);
     const saved = createAnalysis(db, {
       marketSlug: row.slug,
+      promptTemplateId: template?.id ?? null,
       promptText,
       inputHash,
       modelName: model,
@@ -196,6 +226,56 @@ app.post("/api/markets/:slug/analyze", async (req, res) => {
     });
     res.status(200).json({ analysis: saved, cached: false });
   } catch (err) {
+    res.status(err.status || 502).json({ error: String(err.message ?? err) });
+  }
+});
+
+// Phase 4: a follow-up question layered on a prior analysis — DeepSeek gets
+// the full reconstructed thread (every ancestor's prompt+reply) plus the
+// new question, so it can build on that context. Always creates a new row
+// (parent_analysis_id set), never served from cache.
+app.post("/api/analyses/:id/follow-up", async (req, res) => {
+  const db = getDb(DEFAULT_DB_PATH);
+  const parent = getAnalysis(db, req.params.id);
+  if (!parent) return res.status(404).json({ error: "Analysis not found" });
+  const { text } = req.body || {};
+  if (typeof text !== "string" || !text.trim()) {
+    return res.status(400).json({ error: "text is required" });
+  }
+  try {
+    const apiKey = getSetting(db, DEEPSEEK_KEY_SETTING);
+    const { model, reasoningEffort } = deepseekModelStatus();
+    const thread = getAnalysisThread(db, parent.id);
+    const threadMessages = thread.flatMap((a) => [
+      { role: "user", content: a.prompt_text },
+      { role: "assistant", content: a.result_text },
+    ]);
+    const followUpText = text.trim();
+    const result = await askFollowUp(threadMessages, followUpText, { apiKey, model, reasoningEffort });
+    const costEstimate = estimateCost(model, result.promptTokens, result.completionTokens);
+    const inputHash = computeInputHash({
+      marketSlug: parent.market_slug,
+      promptText: followUpText,
+      modelName: model,
+      reasoningEffort,
+    });
+    const saved = createAnalysis(db, {
+      marketSlug: parent.market_slug,
+      promptTemplateId: parent.prompt_template_id,
+      promptText: followUpText,
+      inputHash,
+      modelName: model,
+      reasoningEffort,
+      resultText: result.content,
+      promptTokens: result.promptTokens,
+      completionTokens: result.completionTokens,
+      tokensUsed: result.tokensUsed,
+      costEstimate,
+      status: "completed",
+      parentAnalysisId: parent.id,
+    });
+    res.status(200).json({ analysis: saved });
+  } catch (err) {
     res.status(502).json({ error: String(err.message ?? err) });
   }
 });
@@ -208,6 +288,59 @@ app.get("/api/analyses/:id", (req, res) => {
   const row = getAnalysis(getDb(DEFAULT_DB_PATH), req.params.id);
   if (!row) return res.status(404).json({ error: "Analysis not found" });
   res.json(row);
+});
+
+// Phase 4: reusable prompt template CRUD, plus which one is the default
+// used when an analysis request doesn't specify a templateId.
+app.get("/api/prompt-templates", (req, res) => {
+  res.json(listPromptTemplates(getDb(DEFAULT_DB_PATH)));
+});
+
+app.post("/api/prompt-templates", (req, res) => {
+  const { name, template } = req.body || {};
+  if (typeof name !== "string" || !name.trim() || typeof template !== "string" || !template.trim()) {
+    return res.status(400).json({ error: "name and template are required" });
+  }
+  res.status(201).json(createPromptTemplate(getDb(DEFAULT_DB_PATH), { name: name.trim(), template }));
+});
+
+app.put("/api/prompt-templates/:id", (req, res) => {
+  const db = getDb(DEFAULT_DB_PATH);
+  const existing = getPromptTemplate(db, req.params.id);
+  if (!existing) return res.status(404).json({ error: "Prompt template not found" });
+  const { name = existing.name, template = existing.template } = req.body || {};
+  if (!name.trim() || !template.trim()) {
+    return res.status(400).json({ error: "name and template cannot be empty" });
+  }
+  res.status(200).json(updatePromptTemplate(db, req.params.id, { name, template }));
+});
+
+app.delete("/api/prompt-templates/:id", (req, res) => {
+  const db = getDb(DEFAULT_DB_PATH);
+  deletePromptTemplate(db, req.params.id);
+  const defaultId = getSetting(db, DEFAULT_TEMPLATE_ID_SETTING);
+  if (String(defaultId) === String(req.params.id)) deleteSetting(db, DEFAULT_TEMPLATE_ID_SETTING);
+  res.status(204).end();
+});
+
+app.get("/api/settings/default-prompt-template", (req, res) => {
+  const db = getDb(DEFAULT_DB_PATH);
+  const id = getSetting(db, DEFAULT_TEMPLATE_ID_SETTING);
+  res.json({ templateId: id ? Number(id) : null });
+});
+
+app.post("/api/settings/default-prompt-template", (req, res) => {
+  const db = getDb(DEFAULT_DB_PATH);
+  const { templateId } = req.body || {};
+  if (templateId == null) {
+    deleteSetting(db, DEFAULT_TEMPLATE_ID_SETTING);
+    return res.status(200).json({ templateId: null });
+  }
+  if (!getPromptTemplate(db, templateId)) {
+    return res.status(400).json({ error: "Unknown prompt template" });
+  }
+  setSetting(db, DEFAULT_TEMPLATE_ID_SETTING, String(templateId));
+  res.status(200).json({ templateId: Number(templateId) });
 });
 
 app.get("/api/settings/deepseek-key", (req, res) => {

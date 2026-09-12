@@ -358,6 +358,7 @@ export function createAnalysis(
     costEstimate = null,
     status = "completed",
     error = null,
+    parentAnalysisId = null,
   }
 ) {
   const now = new Date().toISOString();
@@ -365,9 +366,11 @@ export function createAnalysis(
     .prepare(
       `INSERT INTO ai_analysis
          (market_slug, prompt_template_id, prompt_text, input_hash, model_name, reasoning_effort,
-          result_text, prompt_tokens, completion_tokens, tokens_used, cost_estimate, status, error, created_at)
+          result_text, prompt_tokens, completion_tokens, tokens_used, cost_estimate, status, error,
+          parent_analysis_id, created_at)
        VALUES (@marketSlug, @promptTemplateId, @promptText, @inputHash, @modelName, @reasoningEffort,
-               @resultText, @promptTokens, @completionTokens, @tokensUsed, @costEstimate, @status, @error, @now)`
+               @resultText, @promptTokens, @completionTokens, @tokensUsed, @costEstimate, @status, @error,
+               @parentAnalysisId, @now)`
     )
     .run({
       marketSlug,
@@ -383,6 +386,7 @@ export function createAnalysis(
       costEstimate,
       status,
       error,
+      parentAnalysisId,
       now,
     });
   return getAnalysis(db, result.lastInsertRowid);
@@ -396,6 +400,52 @@ export function listAnalysesForMarket(db, marketSlug) {
   return db
     .prepare("SELECT * FROM ai_analysis WHERE market_slug = ? ORDER BY created_at DESC")
     .all(marketSlug);
+}
+
+// Walks an analysis's parent_analysis_id chain from the root down to `id`
+// itself (inclusive) — reconstructs a follow-up thread (Phase 4) for
+// rebuilding multi-turn DeepSeek context or rendering a conversation view.
+export function getAnalysisThread(db, id) {
+  const chain = [];
+  let current = getAnalysis(db, id);
+  while (current) {
+    chain.unshift(current);
+    current = current.parent_analysis_id ? getAnalysis(db, current.parent_analysis_id) : null;
+  }
+  return chain;
+}
+
+// Reusable prompt templates (Phase 4) — named, editable, selectable per
+// analysis; replaces Phase 3's single settings-stored prompt string on the
+// Express/SQLite backend (migration 005 seeds one from that old value).
+export function listPromptTemplates(db) {
+  return db.prepare("SELECT * FROM prompt_templates ORDER BY name ASC").all();
+}
+
+export function getPromptTemplate(db, id) {
+  return db.prepare("SELECT * FROM prompt_templates WHERE id = ?").get(id);
+}
+
+export function createPromptTemplate(db, { name, template }) {
+  const now = new Date().toISOString();
+  const result = db
+    .prepare("INSERT INTO prompt_templates (name, template, created_at, updated_at) VALUES (?, ?, ?, ?)")
+    .run(name, template, now, now);
+  return getPromptTemplate(db, result.lastInsertRowid);
+}
+
+export function updatePromptTemplate(db, id, { name, template }) {
+  db.prepare("UPDATE prompt_templates SET name = ?, template = ?, updated_at = ? WHERE id = ?").run(
+    name,
+    template,
+    new Date().toISOString(),
+    id
+  );
+  return getPromptTemplate(db, id);
+}
+
+export function deletePromptTemplate(db, id) {
+  db.prepare("DELETE FROM prompt_templates WHERE id = ?").run(id);
 }
 
 /** Audit trail of catalog fetches (ad hoc or from a saved search), Phase 2. */

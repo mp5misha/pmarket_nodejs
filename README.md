@@ -303,6 +303,28 @@ cache hits) — not an accounting-accurate number. This history and caching
 behavior is **Express/SQLite only**; the frozen Vercel deploy still returns
 a single uncached analysis per click.
 
+### Prompt templates and follow-ups (Express/SQLite only)
+
+⚙ **Settings** has a **Prompt templates** manager instead of Phase 3's
+single prompt textarea: create, edit, and delete named templates, and mark
+one as the default. A market's detail panel gets a template picker next to
+**Analyze with DeepSeek** to use a specific template for that run instead of
+the default — each saved analysis remembers which template produced it.
+
+Once an analysis exists, an **Ask a follow-up** box appears below it. A
+follow-up sends DeepSeek the *entire reconstructed conversation* — every
+ancestor's original prompt and reply, in order — plus the new question, so
+it can build on that context rather than starting cold. Each follow-up is
+its own new `ai_analysis` row (never served from cache, since it's a new
+question) linked to its parent; the History dropdown marks these with a
+"↳", and selecting one renders the whole thread from the root down,
+labeling each turn ("Follow-up: <question>").
+
+Both features are **Express/SQLite only** — on the frozen Vercel deploy,
+the template picker and follow-up box simply don't appear (Settings falls
+back to the old single-prompt editor), and "Analyze" behaves as it did in
+Phase 3.
+
 ## Database migrations (`server/`)
 
 The Express/SQLite backend now tracks schema changes as numbered files in

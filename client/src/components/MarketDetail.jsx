@@ -14,6 +14,20 @@ function fmtRelatedPrice(v) {
   return v === null || v === undefined ? "—" : Number(v).toFixed(3);
 }
 
+// Walks an analysis's parent_analysis_id chain from root to `id`, using the
+// already-fetched flat list for this market (every ancestor of a follow-up
+// is always on the same market, so no extra request is needed).
+function buildThread(analyses, id) {
+  const byId = new Map(analyses.map((a) => [a.id, a]));
+  const chain = [];
+  let current = byId.get(id);
+  while (current) {
+    chain.unshift(current);
+    current = current.parent_analysis_id ? byId.get(current.parent_analysis_id) : null;
+  }
+  return chain;
+}
+
 export default function MarketDetail({ market, onOpenSettings, onSelectRelated }) {
   const [history, setHistory] = useState(null);
   const [loadingHist, setLoadingHist] = useState(false);
@@ -25,9 +39,21 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
   const [analysisError, setAnalysisError] = useState(null);
   const [lastWasCached, setLastWasCached] = useState(false);
 
+  // Reusable prompt templates (Phase 4) — Express/SQLite only; the
+  // picker is simply omitted when the endpoint isn't available (Vercel),
+  // and the server falls back to whatever default it has configured.
+  const [promptTemplates, setPromptTemplates] = useState(null);
+  const [analyzeTemplateId, setAnalyzeTemplateId] = useState("");
+
+  // Follow-up prompts layered on a stored analysis (Phase 4).
+  const [followUpText, setFollowUpText] = useState("");
+  const [loadingFollowUp, setLoadingFollowUp] = useState(false);
+  const [followUpError, setFollowUpError] = useState(null);
+
   const [related, setRelated] = useState([]);
 
   const selectedAnalysis = analyses.find((a) => a.id === selectedAnalysisId) || null;
+  const thread = selectedAnalysis ? buildThread(analyses, selectedAnalysis.id) : [];
 
   // Reset the chart and any AI analysis whenever a different market is selected
   useEffect(() => {
@@ -37,7 +63,25 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
     setSelectedAnalysisId(null);
     setAnalysisError(null);
     setLastWasCached(false);
+    setFollowUpText("");
+    setFollowUpError(null);
   }, [market.slug]);
+
+  // Prompt templates don't depend on which market is selected — fetch once.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listPromptTemplates()
+      .then((rows) => {
+        if (!cancelled) setPromptTemplates(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setPromptTemplates(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Past analyses for this market (Phase 3) — newest first; the most recent
   // one is shown by default, older ones stay available to view/compare.
@@ -92,7 +136,10 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
     setLoadingAnalysis(true);
     setAnalysisError(null);
     try {
-      const { analysis, cached } = await api.analyzeMarket(market.slug, { force });
+      const { analysis, cached } = await api.analyzeMarket(market.slug, {
+        force,
+        templateId: analyzeTemplateId || undefined,
+      });
       setLastWasCached(cached);
       setAnalyses((prev) => {
         const withoutDup = prev.filter((a) => a.id !== analysis.id);
@@ -103,6 +150,22 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
       setAnalysisError(err.message);
     } finally {
       setLoadingAnalysis(false);
+    }
+  };
+
+  const runFollowUp = async () => {
+    if (!followUpText.trim() || !selectedAnalysisId) return;
+    setLoadingFollowUp(true);
+    setFollowUpError(null);
+    try {
+      const { analysis } = await api.followUpAnalysis(selectedAnalysisId, followUpText.trim());
+      setAnalyses((prev) => [analysis, ...prev]);
+      setSelectedAnalysisId(analysis.id);
+      setFollowUpText("");
+    } catch (err) {
+      setFollowUpError(err.message);
+    } finally {
+      setLoadingFollowUp(false);
     }
   };
 
@@ -193,6 +256,21 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
         <div className="ai-analysis-header">
           <h4>AI analysis (DeepSeek)</h4>
           <div className="ai-analysis-actions">
+            {promptTemplates && promptTemplates.length > 0 && (
+              <select
+                className="ai-analysis-template-picker"
+                value={analyzeTemplateId}
+                onChange={(e) => setAnalyzeTemplateId(e.target.value)}
+                title="Prompt template to use for the next analysis"
+              >
+                <option value="">Default template</option>
+                {promptTemplates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))}
+              </select>
+            )}
             <button className="btn btn-small" onClick={() => runAnalysis(false)} disabled={loadingAnalysis}>
               {loadingAnalysis ? "Analyzing…" : "Analyze with DeepSeek"}
             </button>
@@ -229,6 +307,7 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
             >
               {analyses.map((a) => (
                 <option key={a.id} value={a.id}>
+                  {a.parent_analysis_id ? "↳ " : ""}
                   {new Date(a.created_at).toLocaleString()} · {a.model_name}
                   {a.reasoning_effort ? ` (${a.reasoning_effort})` : ""}
                 </option>
@@ -237,19 +316,39 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
           </div>
         )}
 
-        {selectedAnalysis && (
-          <>
+        {thread.map((a, i) => (
+          <div key={a.id}>
+            {i > 0 && <p className="ai-analysis-turn-label">Follow-up: {a.prompt_text}</p>}
             <p className="ai-analysis-meta">
-              {new Date(selectedAnalysis.created_at).toLocaleString()} · {selectedAnalysis.model_name}
-              {selectedAnalysis.reasoning_effort ? ` (${selectedAnalysis.reasoning_effort})` : ""}
-              {selectedAnalysis.tokens_used != null && <> · {selectedAnalysis.tokens_used} tokens</>}
-              {selectedAnalysis.cost_estimate != null && (
-                <> · ~${selectedAnalysis.cost_estimate.toFixed(4)} est.</>
+              {new Date(a.created_at).toLocaleString()} · {a.model_name}
+              {a.reasoning_effort ? ` (${a.reasoning_effort})` : ""}
+              {a.tokens_used != null && <> · {a.tokens_used} tokens</>}
+              {a.cost_estimate != null && <> · ~${a.cost_estimate.toFixed(4)} est.</>}
+              {lastWasCached && a.id === analyses[0]?.id && a.id === selectedAnalysisId && (
+                <> · from history (not re-billed)</>
               )}
-              {lastWasCached && selectedAnalysisId === analyses[0]?.id && <> · from history (not re-billed)</>}
             </p>
-            <div className="ai-analysis-text">{selectedAnalysis.result_text}</div>
-          </>
+            <div className="ai-analysis-text">{a.result_text}</div>
+          </div>
+        ))}
+
+        {selectedAnalysis && (
+          <div className="ai-analysis-followup">
+            <textarea
+              rows={2}
+              placeholder="Ask a follow-up about this analysis…"
+              value={followUpText}
+              onChange={(e) => setFollowUpText(e.target.value)}
+            />
+            <button
+              className="btn btn-small"
+              onClick={runFollowUp}
+              disabled={loadingFollowUp || !followUpText.trim()}
+            >
+              {loadingFollowUp ? "Asking…" : "Ask follow-up"}
+            </button>
+            {followUpError && <p className="sync-error">{followUpError}</p>}
+          </div>
         )}
       </div>
     </section>
