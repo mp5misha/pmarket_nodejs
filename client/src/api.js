@@ -24,6 +24,16 @@ export const api = {
   market: (slug) => fetch(`${BASE}/markets/${encodeURIComponent(slug)}`).then(handle),
   history: (slug, interval = "max") =>
     fetch(`${BASE}/markets/${encodeURIComponent(slug)}/history?interval=${interval}`).then(handle),
+  tags: () => fetch(`${BASE}/tags`).then(handle),
+  // Bulk-refreshes current price/volume/liquidity for the given slugs from
+  // Polymarket, in place of a full sync — used by the table's "Update
+  // selected" action.
+  refreshMarkets: (slugs) =>
+    fetch(`${BASE}/markets/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slugs }),
+    }).then(handle),
   // One bounded chunk of a sync — the caller loops this, advancing offset,
   // until `done` comes back true. Same contract on both deploy targets
   // (Express /api/sync/step and the Vercel function of the same name).

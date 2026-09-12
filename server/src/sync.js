@@ -1,5 +1,12 @@
 import { getDb, upsertMarket } from "./db.js";
-import { fetchMarketsPage, fetchPriceHistory, normalizeMarket } from "./polymarket.js";
+import {
+  fetchMarketsPage,
+  fetchMarketBySlug,
+  fetchPriceHistory,
+  normalizeMarket,
+} from "./polymarket.js";
+
+const REFRESH_CONCURRENCY = 4;
 
 // Processes exactly one page (bounded by batchSize) per call. The client
 // calls this repeatedly, advancing `offset` each time, until `done` comes
@@ -45,4 +52,37 @@ export async function runSyncStep({
     nextOffset: offset + page.length,
     done: page.length < batchSize,
   };
+}
+
+// Re-fetches current price/volume/liquidity for a specific list of slugs —
+// used by the "update selected markets" bulk action in the table, as
+// opposed to runSyncStep's full paginated catalog sync. Existing min/max
+// price and CLOB token id are preserved (upsertMarket's COALESCE behavior).
+export async function refreshMarketPrices({ dbPath, slugs }) {
+  const db = getDb(dbPath);
+  const queue = [...new Set(slugs)].filter(Boolean);
+  const updated = [];
+  const failed = [];
+
+  async function worker() {
+    for (;;) {
+      const slug = queue.shift();
+      if (!slug) return;
+      try {
+        const raw = await fetchMarketBySlug(slug);
+        if (!raw) {
+          failed.push({ slug, error: "Not found on Polymarket" });
+          continue;
+        }
+        upsertMarket(db, normalizeMarket(raw));
+        updated.push(slug);
+      } catch (err) {
+        failed.push({ slug, error: String(err.message ?? err) });
+      }
+    }
+  }
+
+  const workerCount = Math.min(REFRESH_CONCURRENCY, queue.length);
+  await Promise.all(Array.from({ length: workerCount }, worker));
+  return { updated, failed };
 }

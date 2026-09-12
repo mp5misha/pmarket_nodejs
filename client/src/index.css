@@ -220,7 +220,32 @@ button {
 .result-count {
   font-size: 12.5px;
   color: var(--ink-soft);
-  margin: 0 0 10px;
+  margin: 0;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.bulk-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.selected-count {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.btn-small {
+  padding: 7px 12px;
+  font-size: 12.5px;
 }
 
 table.ledger {
@@ -264,8 +289,32 @@ table.ledger tbody tr.selected {
   white-space: nowrap;
 }
 
+.select-col {
+  width: 32px;
+  text-align: center;
+}
+
+.select-col input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
 .q-cell {
   max-width: 440px;
+}
+
+.tags-cell {
+  max-width: 200px;
+}
+
+.tag-badge {
+  display: inline-block;
+  background: rgba(184, 134, 46, 0.14);
+  color: var(--accent);
+  border-radius: 3px;
+  padding: 2px 7px;
+  font-size: 11px;
+  margin: 2px 4px 2px 0;
+  white-space: nowrap;
 }
 
 .q-title {

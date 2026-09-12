@@ -49,6 +49,14 @@ export async function fetchMarketsPage(
   });
 }
 
+/** Looks up one market by its exact slug — used for the "update selected
+ * markets" bulk price refresh, where we already know which slugs to target
+ * instead of paging through the whole catalog. */
+export async function fetchMarketBySlug(slug) {
+  const data = await getJson(`${GAMMA_BASE}/markets`, { slug, limit: 1 });
+  return Array.isArray(data) && data.length ? data[0] : null;
+}
+
 /** Async generator — paginates through the Gamma API, yielding raw market objects. */
 export async function* fetchAllMarkets({ maxMarkets = null, active = true, closed = false } = {}) {
   let offset = 0;
@@ -87,6 +95,27 @@ function parseJsonField(raw, fallback = []) {
   }
 }
 
+/** Gamma markets carry their event/category tags nested under `events[].tags`
+ * (each `{ label, slug, ... }`); some responses also expose a flat `tags` or
+ * `category` field. Collect whatever's present into a flat, deduped list of
+ * labels for filtering/display. */
+function extractTags(raw) {
+  const labels = new Set();
+  const addFrom = (list) => {
+    if (!Array.isArray(list)) return;
+    for (const t of list) {
+      const label = typeof t === "string" ? t : t?.label;
+      if (label) labels.add(label);
+    }
+  };
+  if (Array.isArray(raw.events)) {
+    for (const ev of raw.events) addFrom(ev?.tags);
+  }
+  addFrom(raw.tags);
+  if (!labels.size && raw.category) labels.add(String(raw.category));
+  return [...labels];
+}
+
 /** Turns one raw Gamma API market object into our flat storage shape. */
 export function normalizeMarket(raw) {
   const outcomes = parseJsonField(raw.outcomes, []);
@@ -119,5 +148,6 @@ export function normalizeMarket(raw) {
     resolutionDate: raw.endDate ?? null,
     active: Boolean(raw.active),
     closed: Boolean(raw.closed),
+    tags: extractTags(raw),
   };
 }

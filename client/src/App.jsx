@@ -14,8 +14,15 @@ export default function App() {
   const [status, setStatus] = useState("");
   const [sortBy, setSortBy] = useState("volume");
   const [minVolume, setMinVolume] = useState(0);
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
+  const [tag, setTag] = useState("");
+  const [tags, setTags] = useState([]);
 
   const [selectedSlug, setSelectedSlug] = useState(null);
+  const [selectedSlugs, setSelectedSlugs] = useState(() => new Set());
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState(null);
   const [syncStatus, setSyncStatus] = useState({ running: false, total: 0, limit: 0 });
   const cancelRef = useRef(false);
 
@@ -27,11 +34,27 @@ export default function App() {
     }
   };
 
+  const refreshTags = async () => {
+    try {
+      setTags(await api.tags());
+    } catch {
+      /* non-fatal */
+    }
+  };
+
   const refreshMarkets = async () => {
     setLoading(true);
     setError(null);
     try {
-      const rows = await api.markets({ search, status, sortBy, minVolume: minVolume || undefined });
+      const rows = await api.markets({
+        search,
+        status,
+        sortBy,
+        minVolume: minVolume || undefined,
+        minPrice: minPrice === "" ? undefined : minPrice,
+        maxPrice: maxPrice === "" ? undefined : maxPrice,
+        tag: tag || undefined,
+      });
       setMarkets(rows);
     } catch (err) {
       setError(err.message);
@@ -43,6 +66,7 @@ export default function App() {
   // Initial load
   useEffect(() => {
     refreshStats();
+    refreshTags();
     refreshMarkets();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -50,12 +74,53 @@ export default function App() {
   // Re-query whenever a filter changes
   useEffect(() => {
     refreshMarkets();
+    setSelectedSlugs(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, status, sortBy, minVolume]);
+  }, [search, status, sortBy, minVolume, minPrice, maxPrice, tag]);
 
   useEffect(() => () => {
     cancelRef.current = true;
   }, []);
+
+  const toggleSelectMarket = (slug) => {
+    setSelectedSlugs((prev) => {
+      const next = new Set(prev);
+      if (next.has(slug)) next.delete(slug);
+      else next.add(slug);
+      return next;
+    });
+  };
+
+  const toggleSelectAllMarkets = () => {
+    setSelectedSlugs((prev) => {
+      const allSelected = markets.length > 0 && markets.every((m) => prev.has(m.slug));
+      return allSelected ? new Set() : new Set(markets.map((m) => m.slug));
+    });
+  };
+
+  // Fetches fresh price/volume/liquidity from Polymarket for just the
+  // checked rows, instead of running a full catalog sync.
+  const updateSelectedPrices = async () => {
+    if (selectedSlugs.size === 0) return;
+    setRefreshing(true);
+    setRefreshError(null);
+    try {
+      const result = await api.refreshMarkets([...selectedSlugs]);
+      setSelectedSlugs(new Set());
+      await Promise.all([refreshMarkets(), refreshStats()]);
+      if (result.failed?.length) {
+        setRefreshError(
+          `Couldn't update ${result.failed.length} market(s): ${result.failed
+            .map((f) => f.slug)
+            .join(", ")}`
+        );
+      }
+    } catch (err) {
+      setRefreshError(err.message);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   // Runs the sync as a series of bounded steps (see api.syncStep) — small
   // enough per call to stay well within a serverless function's time limit,
@@ -88,6 +153,7 @@ export default function App() {
       }
       setSyncStatus({ running: false, total, limit, error: null });
       refreshStats();
+      refreshTags();
       refreshMarkets();
     } catch (err) {
       setSyncStatus({ running: false, total, limit, error: err.message });
@@ -131,9 +197,36 @@ export default function App() {
             value={minVolume || ""}
             onChange={(e) => setMinVolume(Number(e.target.value) || 0)}
           />
+          <select value={tag} onChange={(e) => setTag(e.target.value)}>
+            <option value="">All categories</option>
+            {tags.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+          <input
+            type="number"
+            placeholder="Min price"
+            min={0}
+            max={1}
+            step={0.01}
+            value={minPrice}
+            onChange={(e) => setMinPrice(e.target.value === "" ? "" : Number(e.target.value))}
+          />
+          <input
+            type="number"
+            placeholder="Max price"
+            min={0}
+            max={1}
+            step={0.01}
+            value={maxPrice}
+            onChange={(e) => setMaxPrice(e.target.value === "" ? "" : Number(e.target.value))}
+          />
         </div>
 
         {error && <p className="sync-error">{error}</p>}
+        {refreshError && <p className="sync-error">{refreshError}</p>}
 
         {!loading && markets.length === 0 ? (
           <div className="empty-state">
@@ -141,8 +234,27 @@ export default function App() {
           </div>
         ) : (
           <>
-            <p className="result-count">{markets.length} markets</p>
-            <MarketTable markets={markets} selectedSlug={selectedSlug} onSelect={setSelectedSlug} />
+            <div className="toolbar">
+              <p className="result-count">{markets.length} markets</p>
+              <div className="bulk-actions">
+                <span className="selected-count">{selectedSlugs.size} selected</span>
+                <button
+                  className="btn btn-small"
+                  disabled={selectedSlugs.size === 0 || refreshing}
+                  onClick={updateSelectedPrices}
+                >
+                  {refreshing ? "Updating…" : "Update selected prices"}
+                </button>
+              </div>
+            </div>
+            <MarketTable
+              markets={markets}
+              selectedSlug={selectedSlug}
+              onSelect={setSelectedSlug}
+              selectedSlugs={selectedSlugs}
+              onToggleSelect={toggleSelectMarket}
+              onToggleSelectAll={toggleSelectAllMarkets}
+            />
           </>
         )}
 

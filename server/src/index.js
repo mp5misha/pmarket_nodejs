@@ -3,9 +3,17 @@ import cors from "cors";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import { getDb, queryMarkets, getMarket, getStats, getAllForExport, DEFAULT_DB_PATH } from "./db.js";
+import {
+  getDb,
+  queryMarkets,
+  getMarket,
+  getStats,
+  getAllForExport,
+  getTags,
+  DEFAULT_DB_PATH,
+} from "./db.js";
 import { fetchPriceHistory } from "./polymarket.js";
-import { runSyncStep } from "./sync.js";
+import { runSyncStep, refreshMarketPrices } from "./sync.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
@@ -18,14 +26,21 @@ app.get("/api/stats", (req, res) => {
 });
 
 app.get("/api/markets", (req, res) => {
-  const { search, status, sortBy, minVolume } = req.query;
+  const { search, status, sortBy, minVolume, minPrice, maxPrice, tag } = req.query;
   const rows = queryMarkets(getDb(DEFAULT_DB_PATH), {
     search,
     status,
     sortBy,
     minVolume: minVolume ? Number(minVolume) : 0,
+    minPrice: minPrice !== undefined && minPrice !== "" ? Number(minPrice) : null,
+    maxPrice: maxPrice !== undefined && maxPrice !== "" ? Number(maxPrice) : null,
+    tag: tag || undefined,
   });
   res.json(rows);
+});
+
+app.get("/api/tags", (req, res) => {
+  res.json(getTags(getDb(DEFAULT_DB_PATH)));
 });
 
 app.get("/api/markets/:slug", (req, res) => {
@@ -64,6 +79,19 @@ app.get("/api/export", (req, res) => {
   res.setHeader("Content-Type", "text/csv");
   res.setHeader("Content-Disposition", "attachment; filename=markets.csv");
   res.send(lines.join("\n"));
+});
+
+app.post("/api/markets/refresh", async (req, res) => {
+  const { slugs } = req.body || {};
+  if (!Array.isArray(slugs) || slugs.length === 0) {
+    return res.status(400).json({ error: "slugs must be a non-empty array" });
+  }
+  try {
+    const result = await refreshMarketPrices({ dbPath: DEFAULT_DB_PATH, slugs });
+    res.status(200).json(result);
+  } catch (err) {
+    res.status(500).json({ error: String(err.message ?? err) });
+  }
 });
 
 app.post("/api/sync/step", async (req, res) => {

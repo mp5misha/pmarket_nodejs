@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS markets (
   active          INTEGER,
   closed          INTEGER,
   yes_token_id    TEXT,
+  tags            TEXT,
   last_updated    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_markets_volume ON markets(volume);
@@ -37,6 +38,12 @@ export function getDb(dbPath = DEFAULT_DB_PATH) {
   if (dbInstance) dbInstance.close();
   dbInstance = new Database(dbPath);
   dbInstance.exec(SCHEMA);
+  // `tags` was added after the initial schema — CREATE TABLE IF NOT EXISTS
+  // won't retrofit it onto a database file created before this change.
+  const columns = dbInstance.prepare("PRAGMA table_info(markets)").all().map((c) => c.name);
+  if (!columns.includes("tags")) {
+    dbInstance.exec("ALTER TABLE markets ADD COLUMN tags TEXT");
+  }
   dbInstancePath = dbPath;
   return dbInstance;
 }
@@ -45,11 +52,11 @@ const UPSERT_SQL = `
 INSERT INTO markets (slug, market_id, condition_id, question, outcomes,
                       outcome_prices, current_price, min_price, max_price,
                       volume, liquidity, resolution_date, active, closed,
-                      yes_token_id, last_updated)
+                      yes_token_id, tags, last_updated)
 VALUES (@slug, @market_id, @condition_id, @question, @outcomes,
         @outcome_prices, @current_price, @min_price, @max_price,
         @volume, @liquidity, @resolution_date, @active, @closed,
-        @yes_token_id, @last_updated)
+        @yes_token_id, @tags, @last_updated)
 ON CONFLICT(slug) DO UPDATE SET
   market_id=excluded.market_id,
   condition_id=excluded.condition_id,
@@ -65,6 +72,7 @@ ON CONFLICT(slug) DO UPDATE SET
   active=excluded.active,
   closed=excluded.closed,
   yes_token_id=COALESCE(excluded.yes_token_id, markets.yes_token_id),
+  tags=excluded.tags,
   last_updated=excluded.last_updated
 `;
 
@@ -86,13 +94,17 @@ export function upsertMarket(db, market, { minPrice = null, maxPrice = null } = 
     active: market.active ? 1 : 0,
     closed: market.closed ? 1 : 0,
     yes_token_id: market.yesTokenId ?? null,
+    tags: JSON.stringify(market.tags ?? []),
     last_updated: new Date().toISOString(),
   });
 }
 
 const SORTABLE = new Set(["volume", "liquidity", "current_price", "resolution_date"]);
 
-export function queryMarkets(db, { search, status, sortBy = "volume", minVolume = 0 } = {}) {
+export function queryMarkets(
+  db,
+  { search, status, sortBy = "volume", minVolume = 0, minPrice, maxPrice, tag } = {}
+) {
   const clauses = [];
   const params = {};
   if (search) {
@@ -105,10 +117,36 @@ export function queryMarkets(db, { search, status, sortBy = "volume", minVolume 
     clauses.push("COALESCE(volume, 0) >= @minVolume");
     params.minVolume = minVolume;
   }
+  if (minPrice != null) {
+    clauses.push("current_price >= @minPrice");
+    params.minPrice = minPrice;
+  }
+  if (maxPrice != null) {
+    clauses.push("current_price <= @maxPrice");
+    params.maxPrice = maxPrice;
+  }
+  if (tag) {
+    clauses.push("tags LIKE @tag");
+    params.tag = `%"${tag}"%`;
+  }
   const sortCol = SORTABLE.has(sortBy) ? sortBy : "volume";
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const sql = `SELECT * FROM markets ${where} ORDER BY ${sortCol} DESC NULLS LAST`;
   return db.prepare(sql).all(params);
+}
+
+/** Distinct tag labels across all stored markets, sorted, for the category filter dropdown. */
+export function getTags(db) {
+  const rows = db.prepare("SELECT tags FROM markets WHERE tags IS NOT NULL AND tags != '[]'").all();
+  const labels = new Set();
+  for (const row of rows) {
+    try {
+      for (const t of JSON.parse(row.tags)) labels.add(t);
+    } catch {
+      // skip malformed JSON
+    }
+  }
+  return [...labels].sort((a, b) => a.localeCompare(b));
 }
 
 export function getMarket(db, slug) {

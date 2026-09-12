@@ -156,8 +156,13 @@ proxies `/api/*` requests to the Express server, so both need to be running.
   the min/max columns and the chart — it's slower, one extra API call per
   market). Click **Run sync** and a progress bar tracks it live.
 - **Table** — search by keyword, filter by status, sort by volume / liquidity
-  / price / resolution date, filter by minimum volume. Click any row to open
-  its detail panel below.
+  / price / resolution date, filter by minimum volume, filter by price range
+  (min/max current price), and filter by category/tag (populated from
+  whatever's been synced). Click any row to open its detail panel below.
+- **Bulk price update** — check one or more rows, then click **Update
+  selected prices** to re-fetch just those markets' current price, volume,
+  and liquidity from Polymarket without re-running a full sync. Any
+  previously-computed min/max and CLOB token id are left untouched.
 - **Detail panel** — full metrics plus a **Load price history chart** button
   that fetches that market's complete price history on demand and plots it.
 - **Export CSV** in the sidebar downloads everything currently stored.
