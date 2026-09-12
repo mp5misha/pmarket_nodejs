@@ -1,0 +1,5 @@
+entrypoint = "server/src/index.js"
+run = "npm run build && npm start"
+
+[env]
+NODE_ENV = "production"

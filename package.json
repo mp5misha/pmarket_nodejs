@@ -1,0 +1,18 @@
+{
+  "name": "polymarket-tracker",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=18 <23"
+  },
+  "scripts": {
+    "build": "npm install --prefix client && npm run build --prefix client && npm install --prefix server",
+    "start": "node server/src/index.js",
+    "dev:server": "npm run start --prefix server",
+    "dev:client": "npm run dev --prefix client"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.4"
+  }
+}
