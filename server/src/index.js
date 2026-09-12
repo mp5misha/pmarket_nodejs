@@ -39,6 +39,7 @@ import {
   updatePromptTemplate,
   deletePromptTemplate,
   createTrade,
+  getProfitabilityAnalytics,
   getTrade,
   listTrades,
   listOpenTradeSlugs,
@@ -788,7 +789,7 @@ app.get("/api/trades", requireAuth, (req, res) => {
 });
 
 app.post("/api/trades", requireAuth, (req, res) => {
-  const { marketSlug, side, entryPrice, stake, placedAt, note } = req.body || {};
+  const { marketSlug, side, entryPrice, stake, placedAt, note, estimatedProb } = req.body || {};
   if (!marketSlug || !["yes", "no"].includes(side)) {
     return res.status(400).json({ error: "marketSlug and side ('yes' or 'no') are required" });
   }
@@ -799,6 +800,13 @@ app.post("/api/trades", requireAuth, (req, res) => {
   }
   if (!Number.isFinite(stakeAmount) || stakeAmount <= 0) {
     return res.status(400).json({ error: "stake must be a positive number" });
+  }
+  let estimatedProbValue = null;
+  if (estimatedProb !== undefined && estimatedProb !== null && estimatedProb !== "") {
+    estimatedProbValue = Number(estimatedProb);
+    if (!Number.isFinite(estimatedProbValue) || estimatedProbValue < 0 || estimatedProbValue > 1) {
+      return res.status(400).json({ error: "estimatedProb must be a number between 0 and 1" });
+    }
   }
   const db = getDb(DEFAULT_DB_PATH);
   if (!getMarket(db, marketSlug)) return res.status(404).json({ error: "Market not found" });
@@ -820,6 +828,7 @@ app.post("/api/trades", requireAuth, (req, res) => {
     stake: stakeAmount,
     placedAt: placedAt || undefined,
     note: note || null,
+    estimatedProb: estimatedProbValue,
   });
 
   // Auto-deduct: debit the stake from the bankroll ledger immediately.
@@ -855,6 +864,29 @@ app.post("/api/trades/check-resolutions", requireAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: String(err.message ?? err) });
   }
+});
+
+// Phase 9: aggregate profitability metrics (ROI, win rate, average edge,
+// Brier score) and chart data (P&L over time, P&L by category, calibration)
+// across every resolved trade.
+app.get("/api/trades/analytics", requireAuth, (req, res) => {
+  res.json(getProfitabilityAnalytics(getDb(DEFAULT_DB_PATH), req.userId));
+});
+
+app.get("/api/trades/export", requireAuth, (req, res) => {
+  const rows = listTrades(getDb(DEFAULT_DB_PATH), { userId: req.userId });
+  if (!rows.length) return res.status(404).send("No trades to export yet");
+  const cols = Object.keys(rows[0]).filter((c) => c !== "user_id");
+  const escape = (v) => {
+    if (v === null || v === undefined) return "";
+    const s = String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const lines = [cols.join(",")];
+  for (const r of rows) lines.push(cols.map((c) => escape(r[c])).join(","));
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", "attachment; filename=trades.csv");
+  res.send(lines.join("\n"));
 });
 
 app.get("/api/settings/deepseek-key", requireAuth, (req, res) => {

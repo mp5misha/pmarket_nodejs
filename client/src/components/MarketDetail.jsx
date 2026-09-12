@@ -266,6 +266,11 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
         entryPrice,
         stake,
         note: tradeNote.trim() || undefined,
+        // Recorded only when the Kelly calculator has an estimate typed in
+        // for this side — powers Phase 9's average-edge/Brier-score
+        // calibration metrics down the line.
+        estimatedProb:
+          sizingMethod === "kelly" && estimatedProbPct !== "" ? Number(estimatedProbPct) / 100 : undefined,
       });
       setLastSavedTrade(trade);
       setTradeFormOpen(false);

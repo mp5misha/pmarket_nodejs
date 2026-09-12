@@ -1,4 +1,17 @@
 import { useEffect, useState } from "react";
+import {
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  CartesianGrid,
+  Cell,
+} from "recharts";
 import { api } from "../api.js";
 
 const STATUS_TABS = [
@@ -29,6 +42,7 @@ export default function MyTrades() {
   const [checking, setChecking] = useState(false);
   const [checkNote, setCheckNote] = useState(null);
 
+  const [analytics, setAnalytics] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [ledger, setLedger] = useState([]);
   const [showLedger, setShowLedger] = useState(false);
@@ -58,6 +72,14 @@ export default function MyTrades() {
     }
   };
 
+  const refreshAnalytics = async () => {
+    try {
+      setAnalytics(await api.getTradeAnalytics());
+    } catch {
+      setAnalytics(null);
+    }
+  };
+
   const refreshLedger = async () => {
     try {
       setLedger(await api.listBankrollLedger(50));
@@ -74,6 +96,7 @@ export default function MyTrades() {
   useEffect(() => {
     refreshDashboard();
     refreshLedger();
+    refreshAnalytics();
   }, []);
 
   const checkNow = async () => {
@@ -82,7 +105,7 @@ export default function MyTrades() {
     try {
       const result = await api.checkTradeResolutions();
       setCheckNote(`Checked ${result.checked} market(s), resolved ${result.resolved} trade(s).`);
-      await Promise.all([refresh(), refreshDashboard(), refreshLedger()]);
+      await Promise.all([refresh(), refreshDashboard(), refreshLedger(), refreshAnalytics()]);
     } catch (err) {
       setCheckNote(err.message);
     } finally {
@@ -94,7 +117,7 @@ export default function MyTrades() {
     try {
       await api.deleteTrade(id);
       setTrades((prev) => prev.filter((t) => t.id !== id));
-      await Promise.all([refreshDashboard(), refreshLedger()]);
+      await Promise.all([refreshDashboard(), refreshLedger(), refreshAnalytics()]);
     } catch {
       /* non-fatal */
     }
@@ -211,6 +234,103 @@ export default function MyTrades() {
                 ))}
               </tbody>
             </table>
+          )}
+        </div>
+      )}
+
+      {analytics && analytics.totalTrades > 0 && (
+        <div className="profitability-section">
+          <div className="profitability-header">
+            <h3>Profitability</h3>
+            <a className="btn btn-small btn-ghost" href={api.tradesExportUrl()}>
+              Export CSV
+            </a>
+          </div>
+
+          <div className="bankroll-dashboard">
+            <div className="bankroll-metric">
+              <div className="label">ROI</div>
+              <div className={`value ${analytics.roi >= 0 ? "trades-profit-positive" : "trades-profit-negative"}`}>
+                {analytics.roi != null ? `${(analytics.roi * 100).toFixed(1)}%` : "—"}
+              </div>
+            </div>
+            <div className="bankroll-metric">
+              <div className="label">Win rate</div>
+              <div className="value">
+                {analytics.winRate != null ? `${(analytics.winRate * 100).toFixed(1)}%` : "—"}
+              </div>
+            </div>
+            <div className="bankroll-metric">
+              <div className="label">Avg. edge ({analytics.withEstimateCount} w/ estimate)</div>
+              <div className="value">
+                {analytics.avgEdge != null ? `${(analytics.avgEdge * 100).toFixed(1)}pp` : "—"}
+              </div>
+            </div>
+            <div className="bankroll-metric">
+              <div className="label">Brier score</div>
+              <div className="value">{analytics.brierScore != null ? analytics.brierScore.toFixed(3) : "—"}</div>
+            </div>
+          </div>
+
+          {analytics.pnlOverTime.length > 1 && (
+            <div className="chart-block">
+              <p className="chart-title">Cumulative P&amp;L over time</p>
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={analytics.pnlOverTime}>
+                  <CartesianGrid stroke="var(--rule)" strokeDasharray="2 4" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 11 }}
+                    tickFormatter={(d) => new Date(d).toLocaleDateString()}
+                    minTickGap={40}
+                  />
+                  <YAxis tick={{ fontSize: 11 }} width={50} />
+                  <Tooltip
+                    labelFormatter={(d) => new Date(d).toLocaleString()}
+                    formatter={(v) => [`$${Number(v).toFixed(2)}`, "Cumulative P&L"]}
+                  />
+                  <Line type="monotone" dataKey="cumulativeProfit" stroke="var(--accent)" dot={false} strokeWidth={2} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {analytics.pnlByCategory.length > 0 && (
+            <div className="chart-block">
+              <p className="chart-title">P&amp;L by category</p>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={analytics.pnlByCategory}>
+                  <CartesianGrid stroke="var(--rule)" strokeDasharray="2 4" />
+                  <XAxis dataKey="category" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} width={50} />
+                  <Tooltip formatter={(v) => [`$${Number(v).toFixed(2)}`, "P&L"]} />
+                  <Bar dataKey="profit">
+                    {analytics.pnlByCategory.map((entry, i) => (
+                      <Cell key={i} fill={entry.profit >= 0 ? "var(--up)" : "var(--down)"} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {analytics.calibration.length > 0 && (
+            <div className="chart-block">
+              <p className="chart-title">
+                Calibration — predicted vs. actual win rate by estimated-probability bucket
+              </p>
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={analytics.calibration}>
+                  <CartesianGrid stroke="var(--rule)" strokeDasharray="2 4" />
+                  <XAxis dataKey="bucket" tick={{ fontSize: 11 }} />
+                  <YAxis domain={[0, 1]} tick={{ fontSize: 11 }} width={40} />
+                  <Tooltip formatter={(v) => `${(Number(v) * 100).toFixed(0)}%`} />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Line type="monotone" dataKey="predicted" name="Predicted (avg. estimate)" stroke="var(--accent)" strokeWidth={2} />
+                  <Line type="monotone" dataKey="actual" name="Actual win rate" stroke="var(--up)" strokeWidth={2} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           )}
         </div>
       )}

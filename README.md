@@ -303,7 +303,9 @@ methods, all configured in ⚙ **Settings → Bet sizing**:
   for a share bought at `price` with a $1 payout on a win). A negative edge
   (your estimate is below the market price) suggests $0 rather than betting
   against your own edge. `kellyFraction` defaults to 0.25 (quarter-Kelly, a
-  common way to reduce variance from full Kelly's aggressive sizing).
+  common way to reduce variance from full Kelly's aggressive sizing). This
+  estimate is saved on the trade itself and feeds the average-edge/Brier-
+  score calibration metrics under **Profitability tracking** below.
 - **Flat stake** — always the same configured dollar amount.
 - **Fixed percentage** — a fixed percentage of the configured bankroll,
   regardless of edge.
@@ -340,6 +342,36 @@ entries, keeping the balance consistent.
 The bankroll balance is always `startingAmount + sum(all ledger entries)`,
 computed fresh on every read rather than stored as its own number, so it
 can never drift out of sync with the ledger.
+
+### Profitability tracking (Express/SQLite only)
+
+Once you have at least one resolved (won/lost) trade, **My Trades** shows a
+**Profitability** section below the bankroll dashboard:
+
+- **ROI** — total profit ÷ total staked, across every resolved trade.
+- **Win rate** — won ÷ (won + lost).
+- **Average edge** — the mean of (your estimated probability − the market
+  price you paid) across trades that have an estimate recorded. This only
+  counts trades placed via the Kelly calculator with a probability typed
+  in (see **Suggested stake** above) — a trade sized by flat stake or fixed
+  percentage, with no estimate entered, simply doesn't factor in here
+  rather than being treated as a zero edge.
+- **Brier score** — mean squared error between your estimated probability
+  and the actual outcome (1 if won, 0 if lost) for those same trades. 0 is
+  perfect calibration, 0.25 is what a constant "coin flip" forecast scores,
+  1 is maximally wrong — lower is better.
+
+Three charts visualize the same data: **cumulative P&L over time** (summed
+in resolution order), **P&L by category** (bucketed by each market's first
+tag, or "Uncategorized" if it has none), and a **calibration plot**
+comparing, for each 10-point probability bucket among trades with an
+estimate, your average forecast in that bucket against the actual win rate
+— the two lines should track each other closely if your probability
+estimates are well-calibrated.
+
+**Export CSV** downloads every trade (all statuses, not just resolved ones)
+with entry price, stake, estimated probability, payout, profit, and
+timestamps.
 
 ## Market Discovery (Express/SQLite only)
 

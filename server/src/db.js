@@ -651,14 +651,18 @@ export function deletePromptTemplate(db, userId, id) {
 // trades — hence listTrades/listOpenTradeSlugs below support an
 // unscoped/global mode for that internal use, while every HTTP route
 // passes a concrete userId).
-export function createTrade(db, userId, { marketSlug, side, entryPrice, stake, placedAt, note = null }) {
+export function createTrade(
+  db,
+  userId,
+  { marketSlug, side, entryPrice, stake, placedAt, note = null, estimatedProb = null }
+) {
   const now = new Date().toISOString();
   const result = db
     .prepare(
-      `INSERT INTO trades (user_id, market_slug, side, entry_price, stake, placed_at, note, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)`
+      `INSERT INTO trades (user_id, market_slug, side, entry_price, stake, placed_at, note, estimated_prob, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)`
     )
-    .run(userId, marketSlug, side, entryPrice, stake, placedAt || now, note, now, now);
+    .run(userId, marketSlug, side, entryPrice, stake, placedAt || now, note, estimatedProb, now, now);
   return getTrade(db, userId, result.lastInsertRowid);
 }
 
@@ -786,4 +790,89 @@ export function listFetchRuns(db, userId, { savedSearchId, limit = 50 } = {}) {
   return db
     .prepare("SELECT * FROM fetch_runs WHERE user_id = ? ORDER BY started_at DESC LIMIT ?")
     .all(userId, limit);
+}
+
+// Profitability tracking (Phase 9) — aggregate metrics and chart data over
+// every resolved (won/lost) trade. Per-trade payout/profit are already
+// computed at resolution time (Phase 5); this aggregates across trades.
+export function getProfitabilityAnalytics(db, userId) {
+  const resolved = db
+    .prepare(
+      `SELECT t.*, m.tags AS market_tags
+       FROM trades t LEFT JOIN markets m ON m.slug = t.market_slug
+       WHERE t.user_id = ? AND t.status IN ('won', 'lost')
+       ORDER BY t.resolved_at ASC`
+    )
+    .all(userId);
+
+  const totalStaked = resolved.reduce((sum, t) => sum + t.stake, 0);
+  const totalProfit = resolved.reduce((sum, t) => sum + (t.profit ?? 0), 0);
+  const wonCount = resolved.filter((t) => t.status === "won").length;
+
+  const withEstimate = resolved.filter((t) => t.estimated_prob != null);
+  const avgEdge = withEstimate.length
+    ? withEstimate.reduce((sum, t) => sum + (t.estimated_prob - t.entry_price), 0) / withEstimate.length
+    : null;
+  // Brier score: mean squared error between forecasted probability and the
+  // actual binary outcome — 0 is perfect, 0.25 is what a constant 50%
+  // forecast scores against a 50/50 population, 1 is maximally wrong.
+  const brierScore = withEstimate.length
+    ? withEstimate.reduce((sum, t) => {
+        const outcome = t.status === "won" ? 1 : 0;
+        return sum + (t.estimated_prob - outcome) ** 2;
+      }, 0) / withEstimate.length
+    : null;
+
+  let cumulative = 0;
+  const pnlOverTime = resolved.map((t) => {
+    cumulative += t.profit ?? 0;
+    return { date: t.resolved_at, cumulativeProfit: cumulative };
+  });
+
+  const byCategory = new Map();
+  for (const t of resolved) {
+    let category = "Uncategorized";
+    try {
+      const tags = JSON.parse(t.market_tags || "[]");
+      if (tags.length) category = tags[0];
+    } catch {
+      // keep "Uncategorized"
+    }
+    byCategory.set(category, (byCategory.get(category) || 0) + (t.profit ?? 0));
+  }
+  const pnlByCategory = [...byCategory.entries()]
+    .map(([category, profit]) => ({ category, profit }))
+    .sort((a, b) => b.profit - a.profit);
+
+  // Calibration: bucket trades with an estimate into 10 probability
+  // deciles, comparing each bucket's average forecast to its actual win rate.
+  const buckets = Array.from({ length: 10 }, () => ({ estimates: [], wins: 0, count: 0 }));
+  for (const t of withEstimate) {
+    const idx = Math.min(9, Math.max(0, Math.floor(t.estimated_prob * 10)));
+    buckets[idx].estimates.push(t.estimated_prob);
+    buckets[idx].count += 1;
+    if (t.status === "won") buckets[idx].wins += 1;
+  }
+  const calibration = buckets
+    .map((b, i) => ({
+      bucket: `${i * 10}-${(i + 1) * 10}%`,
+      predicted: b.count ? b.estimates.reduce((sum, e) => sum + e, 0) / b.count : null,
+      actual: b.count ? b.wins / b.count : null,
+      count: b.count,
+    }))
+    .filter((b) => b.count > 0);
+
+  return {
+    totalTrades: resolved.length,
+    totalStaked,
+    totalProfit,
+    winRate: resolved.length ? wonCount / resolved.length : null,
+    roi: totalStaked ? totalProfit / totalStaked : null,
+    avgEdge,
+    brierScore,
+    withEstimateCount: withEstimate.length,
+    pnlOverTime,
+    pnlByCategory,
+    calibration,
+  };
 }

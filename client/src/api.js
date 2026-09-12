@@ -214,6 +214,10 @@ export const api = {
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
     }),
   checkTradeResolutions: () => req(`${BASE}/trades/check-resolutions`, { method: "POST" }).then(handle),
+  // Profitability tracking (Phase 9) — aggregate metrics + chart data over
+  // every resolved trade.
+  getTradeAnalytics: () => req(`${BASE}/trades/analytics`).then(handle),
+  tradesExportUrl: () => `${BASE}/trades/export`,
 
   // Bet-sizing configuration (Phase 6) — Kelly fraction, flat stake, fixed
   // percentage. The response's `bankrollAmount` is the live bankroll
