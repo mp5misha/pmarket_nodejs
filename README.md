@@ -258,12 +258,50 @@ This needs a DeepSeek API key (get one at
   saved in the app itself.
 
 Optional overrides (environment variables only): `DEEPSEEK_MODEL` (default
-`deepseek-chat`) and `DEEPSEEK_BASE_URL` (default
+`deepseek-flash`) and `DEEPSEEK_BASE_URL` (default
 `https://api.deepseek.com`, for a proxy or compatible endpoint). With no key
 configured either way, the button returns a clear "not configured" error
 (with a link straight to Settings) instead of failing silently. A full
 analysis can take a while — the Vercel function's `maxDuration` is set to
 60s to give it room (still clamped lower on the Hobby plan).
+
+### Model selection (Express/SQLite only)
+
+`deepseek-chat`/`deepseek-reasoner` were retired; the ⚙ **Settings** window
+now has a **DeepSeek model** section to choose between the current models
+and a reasoning depth:
+
+- **Model** — `deepseek-flash` or `deepseek-v4-pro`.
+- **Reasoning effort** — **Non-thinking**, **Thinking** (default), or
+  **Thinking (max)**, sent as the API's `reasoning_effort` parameter
+  (`none`/`high`/`max`). Higher effort means a more thorough analysis at
+  higher token cost and slower response.
+
+The choice is saved server-side (same settings store as the API key/prompt)
+and applies to every analysis until changed.
+
+### Analysis history (Express/SQLite only)
+
+Every analysis is now kept, not just the latest one. A market's detail panel
+shows:
+
+- **Analyze with DeepSeek** — if an analysis already exists for the exact
+  same market, prompt, model, and reasoning effort, it's served instantly
+  from history instead of billing DeepSeek again ("from history (not
+  re-billed)"). Otherwise it calls DeepSeek and saves a new record.
+- **Re-run** (shown once at least one analysis exists) — always calls
+  DeepSeek again and saves a new record, even if the inputs are identical to
+  a previous run. Use this to get a fresh take, or after DeepSeek's answer
+  seems stale.
+- A **History** dropdown (once there's more than one analysis) to switch
+  between past runs, each showing its timestamp, model, reasoning effort,
+  token usage, and an estimated cost.
+
+The estimated cost is a rough budgeting figure computed from DeepSeek's
+published per-token list pricing (which varies by peak/off-peak time and
+cache hits) — not an accounting-accurate number. This history and caching
+behavior is **Express/SQLite only**; the frozen Vercel deploy still returns
+a single uncached analysis per click.
 
 ## Database migrations (`server/`)
 

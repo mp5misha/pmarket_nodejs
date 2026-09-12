@@ -19,18 +19,43 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
   const [loadingHist, setLoadingHist] = useState(false);
   const [histError, setHistError] = useState(null);
 
-  const [analysis, setAnalysis] = useState(null);
+  const [analyses, setAnalyses] = useState([]);
+  const [selectedAnalysisId, setSelectedAnalysisId] = useState(null);
   const [loadingAnalysis, setLoadingAnalysis] = useState(false);
   const [analysisError, setAnalysisError] = useState(null);
+  const [lastWasCached, setLastWasCached] = useState(false);
 
   const [related, setRelated] = useState([]);
+
+  const selectedAnalysis = analyses.find((a) => a.id === selectedAnalysisId) || null;
 
   // Reset the chart and any AI analysis whenever a different market is selected
   useEffect(() => {
     setHistory(null);
     setHistError(null);
-    setAnalysis(null);
+    setAnalyses([]);
+    setSelectedAnalysisId(null);
     setAnalysisError(null);
+    setLastWasCached(false);
+  }, [market.slug]);
+
+  // Past analyses for this market (Phase 3) — newest first; the most recent
+  // one is shown by default, older ones stay available to view/compare.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listAnalyses(market.slug)
+      .then((rows) => {
+        if (cancelled) return;
+        setAnalyses(rows);
+        if (rows.length) setSelectedAnalysisId(rows[0].id);
+      })
+      .catch(() => {
+        if (!cancelled) setAnalyses([]);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [market.slug]);
 
   // Other markets under the same Polymarket event (e.g. other candidates in
@@ -63,12 +88,17 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
     }
   };
 
-  const runAnalysis = async () => {
+  const runAnalysis = async (force) => {
     setLoadingAnalysis(true);
     setAnalysisError(null);
     try {
-      const { analysis } = await api.analyzeMarket(market.slug);
-      setAnalysis(analysis);
+      const { analysis, cached } = await api.analyzeMarket(market.slug, { force });
+      setLastWasCached(cached);
+      setAnalyses((prev) => {
+        const withoutDup = prev.filter((a) => a.id !== analysis.id);
+        return [analysis, ...withoutDup];
+      });
+      setSelectedAnalysisId(analysis.id);
     } catch (err) {
       setAnalysisError(err.message);
     } finally {
@@ -162,9 +192,21 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
       <div className="ai-analysis">
         <div className="ai-analysis-header">
           <h4>AI analysis (DeepSeek)</h4>
-          <button className="btn btn-small" onClick={runAnalysis} disabled={loadingAnalysis}>
-            {loadingAnalysis ? "Analyzing…" : analysis ? "Re-analyze" : "Analyze with DeepSeek"}
-          </button>
+          <div className="ai-analysis-actions">
+            <button className="btn btn-small" onClick={() => runAnalysis(false)} disabled={loadingAnalysis}>
+              {loadingAnalysis ? "Analyzing…" : "Analyze with DeepSeek"}
+            </button>
+            {analyses.length > 0 && (
+              <button
+                className="btn btn-small btn-ghost"
+                onClick={() => runAnalysis(true)}
+                disabled={loadingAnalysis}
+                title="Always calls DeepSeek again, even if an identical analysis already exists"
+              >
+                Re-run
+              </button>
+            )}
+          </div>
         </div>
         {analysisError && (
           <p className="sync-error">
@@ -176,7 +218,39 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
             )}
           </p>
         )}
-        {analysis && <div className="ai-analysis-text">{analysis}</div>}
+
+        {analyses.length > 1 && (
+          <div className="ai-analysis-history">
+            <label htmlFor="analysis-picker">History ({analyses.length})</label>
+            <select
+              id="analysis-picker"
+              value={selectedAnalysisId ?? ""}
+              onChange={(e) => setSelectedAnalysisId(Number(e.target.value))}
+            >
+              {analyses.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {new Date(a.created_at).toLocaleString()} · {a.model_name}
+                  {a.reasoning_effort ? ` (${a.reasoning_effort})` : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {selectedAnalysis && (
+          <>
+            <p className="ai-analysis-meta">
+              {new Date(selectedAnalysis.created_at).toLocaleString()} · {selectedAnalysis.model_name}
+              {selectedAnalysis.reasoning_effort ? ` (${selectedAnalysis.reasoning_effort})` : ""}
+              {selectedAnalysis.tokens_used != null && <> · {selectedAnalysis.tokens_used} tokens</>}
+              {selectedAnalysis.cost_estimate != null && (
+                <> · ~${selectedAnalysis.cost_estimate.toFixed(4)} est.</>
+              )}
+              {lastWasCached && selectedAnalysisId === analyses[0]?.id && <> · from history (not re-billed)</>}
+            </p>
+            <div className="ai-analysis-text">{selectedAnalysis.result_text}</div>
+          </>
+        )}
       </div>
     </section>
   );

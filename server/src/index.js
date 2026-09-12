@@ -25,16 +25,32 @@ import {
   listFetchRuns,
   listDueSavedSearches,
   markSavedSearchRun,
+  computeInputHash,
+  findCachedAnalysis,
+  createAnalysis,
+  getAnalysis,
+  listAnalysesForMarket,
   DEFAULT_DB_PATH,
 } from "./db.js";
 import { fetchPriceHistory } from "./polymarket.js";
 import { runSyncStep, refreshMarketPrices, runFullSync } from "./sync.js";
-import { analyzeMarket, DEFAULT_PROMPT_TEMPLATE } from "./deepseek.js";
+import {
+  analyzeMarket,
+  buildAnalysisPrompt,
+  DEFAULT_PROMPT_TEMPLATE,
+  AVAILABLE_MODELS,
+  REASONING_EFFORT_OPTIONS,
+  DEFAULT_MODEL,
+  DEFAULT_REASONING_EFFORT,
+  estimateCost,
+} from "./deepseek.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
 const DEEPSEEK_KEY_SETTING = "deepseek_api_key";
 const DEEPSEEK_PROMPT_SETTING = "deepseek_prompt_template";
+const DEEPSEEK_MODEL_SETTING = "deepseek_model";
+const DEEPSEEK_EFFORT_SETTING = "deepseek_reasoning_effort";
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -51,6 +67,20 @@ function deepseekKeyStatus() {
 function deepseekPromptStatus() {
   const stored = getSetting(getDb(DEFAULT_DB_PATH), DEEPSEEK_PROMPT_SETTING);
   return { template: stored || DEFAULT_PROMPT_TEMPLATE, isDefault: !stored };
+}
+
+/** Currently selected DeepSeek model + reasoning effort (Phase 3), along
+ * with the choices available so the settings UI doesn't hardcode them. */
+function deepseekModelStatus() {
+  const db = getDb(DEFAULT_DB_PATH);
+  const model = getSetting(db, DEEPSEEK_MODEL_SETTING) || DEFAULT_MODEL;
+  const reasoningEffort = getSetting(db, DEEPSEEK_EFFORT_SETTING) || DEFAULT_REASONING_EFFORT;
+  return {
+    model,
+    reasoningEffort,
+    availableModels: AVAILABLE_MODELS,
+    reasoningEffortOptions: REASONING_EFFORT_OPTIONS,
+  };
 }
 
 app.get("/api/stats", (req, res) => {
@@ -127,18 +157,57 @@ app.get("/api/markets/:slug/related", (req, res) => {
   res.json(getMarketsByEvent(db, row.event_id, row.slug));
 });
 
+// Phase 3: persisted analysis history with caching by input_hash (market +
+// prompt + model + reasoning effort). A plain "Analyze" reuses a completed
+// result for the same inputs instead of re-billing DeepSeek; "Re-run"
+// (force: true) always calls DeepSeek again and stores a new row, even if
+// the inputs are identical to a previous one.
 app.post("/api/markets/:slug/analyze", async (req, res) => {
   const db = getDb(DEFAULT_DB_PATH);
   const row = getMarket(db, req.params.slug);
   if (!row) return res.status(404).json({ error: "Market not found" });
+  const { force = false } = req.body || {};
   try {
     const apiKey = getSetting(db, DEEPSEEK_KEY_SETTING);
-    const promptTemplate = getSetting(db, DEEPSEEK_PROMPT_SETTING);
-    const analysis = await analyzeMarket(row, { apiKey, promptTemplate });
-    res.status(200).json({ analysis });
+    const promptTemplate = getSetting(db, DEEPSEEK_PROMPT_SETTING) || DEFAULT_PROMPT_TEMPLATE;
+    const { model, reasoningEffort } = deepseekModelStatus();
+    const promptText = buildAnalysisPrompt(row, promptTemplate);
+    const inputHash = computeInputHash({ marketSlug: row.slug, promptText, modelName: model, reasoningEffort });
+
+    if (!force) {
+      const cached = findCachedAnalysis(db, inputHash);
+      if (cached) return res.status(200).json({ analysis: cached, cached: true });
+    }
+
+    const result = await analyzeMarket(row, { apiKey, promptTemplate, model, reasoningEffort });
+    const costEstimate = estimateCost(model, result.promptTokens, result.completionTokens);
+    const saved = createAnalysis(db, {
+      marketSlug: row.slug,
+      promptText,
+      inputHash,
+      modelName: model,
+      reasoningEffort,
+      resultText: result.content,
+      promptTokens: result.promptTokens,
+      completionTokens: result.completionTokens,
+      tokensUsed: result.tokensUsed,
+      costEstimate,
+      status: "completed",
+    });
+    res.status(200).json({ analysis: saved, cached: false });
   } catch (err) {
     res.status(502).json({ error: String(err.message ?? err) });
   }
+});
+
+app.get("/api/markets/:slug/analyses", (req, res) => {
+  res.json(listAnalysesForMarket(getDb(DEFAULT_DB_PATH), req.params.slug));
+});
+
+app.get("/api/analyses/:id", (req, res) => {
+  const row = getAnalysis(getDb(DEFAULT_DB_PATH), req.params.id);
+  if (!row) return res.status(404).json({ error: "Analysis not found" });
+  res.json(row);
 });
 
 app.get("/api/settings/deepseek-key", (req, res) => {
@@ -175,6 +244,30 @@ app.post("/api/settings/deepseek-prompt", (req, res) => {
 app.delete("/api/settings/deepseek-prompt", (req, res) => {
   deleteSetting(getDb(DEFAULT_DB_PATH), DEEPSEEK_PROMPT_SETTING);
   res.status(200).json(deepseekPromptStatus());
+});
+
+app.get("/api/settings/deepseek-model", (req, res) => {
+  res.json(deepseekModelStatus());
+});
+
+app.post("/api/settings/deepseek-model", (req, res) => {
+  const { model, reasoningEffort } = req.body || {};
+  const db = getDb(DEFAULT_DB_PATH);
+  if (model !== undefined) {
+    if (!AVAILABLE_MODELS.includes(model)) {
+      return res.status(400).json({ error: `Unknown model. Choose one of: ${AVAILABLE_MODELS.join(", ")}` });
+    }
+    setSetting(db, DEEPSEEK_MODEL_SETTING, model);
+  }
+  if (reasoningEffort !== undefined) {
+    if (!REASONING_EFFORT_OPTIONS.some((o) => o.value === reasoningEffort)) {
+      return res.status(400).json({
+        error: `Unknown reasoning effort. Choose one of: ${REASONING_EFFORT_OPTIONS.map((o) => o.value).join(", ")}`,
+      });
+    }
+    setSetting(db, DEEPSEEK_EFFORT_SETTING, reasoningEffort);
+  }
+  res.status(200).json(deepseekModelStatus());
 });
 
 app.get("/api/export", (req, res) => {

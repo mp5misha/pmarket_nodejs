@@ -1,5 +1,6 @@
 import Database from "better-sqlite3";
 import path from "node:path";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { runMigrations } from "./migrate.js";
 
@@ -321,6 +322,80 @@ export function listDueSavedSearches(db) {
 
 export function markSavedSearchRun(db, id) {
   db.prepare("UPDATE saved_searches SET last_run_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+}
+
+// AI analysis history (Phase 3) — every DeepSeek call persisted as its own
+// row, keyed for cache/dedup lookups by a hash of exactly what would be
+// sent (market + prompt + model + reasoning effort).
+export function computeInputHash({ marketSlug, promptText, modelName, reasoningEffort }) {
+  return crypto
+    .createHash("sha256")
+    .update(JSON.stringify({ marketSlug, promptText, modelName, reasoningEffort }))
+    .digest("hex");
+}
+
+export function findCachedAnalysis(db, inputHash) {
+  return db
+    .prepare(
+      "SELECT * FROM ai_analysis WHERE input_hash = ? AND status = 'completed' ORDER BY created_at DESC LIMIT 1"
+    )
+    .get(inputHash);
+}
+
+export function createAnalysis(
+  db,
+  {
+    marketSlug,
+    promptTemplateId = null,
+    promptText,
+    inputHash,
+    modelName,
+    reasoningEffort = null,
+    resultText = null,
+    promptTokens = null,
+    completionTokens = null,
+    tokensUsed = null,
+    costEstimate = null,
+    status = "completed",
+    error = null,
+  }
+) {
+  const now = new Date().toISOString();
+  const result = db
+    .prepare(
+      `INSERT INTO ai_analysis
+         (market_slug, prompt_template_id, prompt_text, input_hash, model_name, reasoning_effort,
+          result_text, prompt_tokens, completion_tokens, tokens_used, cost_estimate, status, error, created_at)
+       VALUES (@marketSlug, @promptTemplateId, @promptText, @inputHash, @modelName, @reasoningEffort,
+               @resultText, @promptTokens, @completionTokens, @tokensUsed, @costEstimate, @status, @error, @now)`
+    )
+    .run({
+      marketSlug,
+      promptTemplateId,
+      promptText,
+      inputHash,
+      modelName,
+      reasoningEffort,
+      resultText,
+      promptTokens,
+      completionTokens,
+      tokensUsed,
+      costEstimate,
+      status,
+      error,
+      now,
+    });
+  return getAnalysis(db, result.lastInsertRowid);
+}
+
+export function getAnalysis(db, id) {
+  return db.prepare("SELECT * FROM ai_analysis WHERE id = ?").get(id);
+}
+
+export function listAnalysesForMarket(db, marketSlug) {
+  return db
+    .prepare("SELECT * FROM ai_analysis WHERE market_slug = ? ORDER BY created_at DESC")
+    .all(marketSlug);
 }
 
 /** Audit trail of catalog fetches (ad hoc or from a saved search), Phase 2. */

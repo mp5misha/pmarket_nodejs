@@ -16,6 +16,10 @@ export default function SettingsModal({ onClose, onStatusChange }) {
   const [promptError, setPromptError] = useState(null);
   const [promptNote, setPromptNote] = useState(null);
 
+  const [modelStatus, setModelStatus] = useState(null);
+  const [modelError, setModelError] = useState(null);
+  const [savingModel, setSavingModel] = useState(false);
+
   const refreshStatus = async () => {
     try {
       const s = await api.getDeepSeekKeyStatus();
@@ -36,11 +40,32 @@ export default function SettingsModal({ onClose, onStatusChange }) {
     }
   };
 
+  const refreshModel = async () => {
+    try {
+      setModelStatus(await api.getDeepSeekModelStatus());
+    } catch (err) {
+      setModelError(err.message);
+    }
+  };
+
   useEffect(() => {
     refreshStatus();
     refreshPrompt();
+    refreshModel();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const updateModel = async (patch) => {
+    setSavingModel(true);
+    setModelError(null);
+    try {
+      setModelStatus(await api.setDeepSeekModelStatus(patch));
+    } catch (err) {
+      setModelError(err.message);
+    } finally {
+      setSavingModel(false);
+    }
+  };
 
   const save = async () => {
     if (!apiKey.trim()) return;
@@ -159,6 +184,43 @@ export default function SettingsModal({ onClose, onStatusChange }) {
               {saving ? "Saving…" : "Save"}
             </button>
           </div>
+
+          <hr className="modal-divider" />
+
+          <p className="settings-label">DeepSeek model</p>
+          {modelStatus && (
+            <>
+              <div className="field-pair">
+                <select
+                  value={modelStatus.model}
+                  disabled={savingModel}
+                  onChange={(e) => updateModel({ model: e.target.value })}
+                >
+                  {modelStatus.availableModels.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={modelStatus.reasoningEffort}
+                  disabled={savingModel}
+                  onChange={(e) => updateModel({ reasoningEffort: e.target.value })}
+                >
+                  {modelStatus.reasoningEffortOptions.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <p className="settings-hint">
+                Higher reasoning effort ("Thinking" / "Thinking (max)") gives more thorough
+                analysis at a higher token cost and slower response.
+              </p>
+            </>
+          )}
+          {modelError && <p className="sync-error">{modelError}</p>}
 
           <hr className="modal-divider" />
 

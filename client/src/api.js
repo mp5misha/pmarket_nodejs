@@ -38,8 +38,18 @@ export const api = {
   tags: () => fetch(`${BASE}/tags`).then(handle),
   // Asks DeepSeek to analyze one market's real probability and background —
   // can take a while (up to a minute or so), so no client-side timeout here.
-  analyzeMarket: (slug) =>
-    fetch(`${BASE}/markets/${encodeURIComponent(slug)}/analyze`, { method: "POST" }).then(handle),
+  // Without force, a completed analysis with identical inputs (market +
+  // prompt + model + reasoning effort) is served from history instead of
+  // billing DeepSeek again; force: true always creates a new record.
+  analyzeMarket: (slug, { force = false } = {}) =>
+    fetch(`${BASE}/markets/${encodeURIComponent(slug)}/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force }),
+    }).then(handle),
+  // Full history of past analyses for one market (Phase 3), newest first.
+  listAnalyses: (slug) => fetch(`${BASE}/markets/${encodeURIComponent(slug)}/analyses`).then(handle),
+  getAnalysis: (id) => fetch(`${BASE}/analyses/${id}`).then(handle),
   // Bulk-refreshes current price/volume/liquidity for the given slugs from
   // Polymarket, in place of a full sync — used by the table's "Update
   // selected" action.
@@ -82,6 +92,15 @@ export const api = {
     }).then(handle),
   resetPromptTemplate: () =>
     fetch(`${BASE}/settings/deepseek-prompt`, { method: "DELETE" }).then(handle),
+  // DeepSeek model + reasoning effort (Phase 3): deepseek-flash/deepseek-v4-pro,
+  // non-thinking/thinking/thinking (max).
+  getDeepSeekModelStatus: () => fetch(`${BASE}/settings/deepseek-model`).then(handle),
+  setDeepSeekModelStatus: (params) =>
+    fetch(`${BASE}/settings/deepseek-model`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    }).then(handle),
 
   // Market Discovery (Phase 2): saved search configurations and an audit
   // trail of catalog fetches. Not available on the frozen Vercel deploy
