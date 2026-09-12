@@ -370,6 +370,54 @@ app.post("/api/settings/highlight-threshold", (req, res) => {
   res.status(200).json({ thresholdPct: n });
 });
 
+// Phase 6: bet-sizing configuration shared by all three staking methods the
+// suggestion calculator offers. `bankrollAmount` here is a bare number to
+// size Kelly/fixed-percentage suggestions against — Phase 7 formalizes a
+// full bankroll (currency, max % per bet, auto-deduct, a ledger) on top of
+// this same setting rather than replacing it.
+const BET_SIZING_SETTING = "bet_sizing";
+const DEFAULT_BET_SIZING = {
+  bankrollAmount: 1000,
+  kellyFraction: 0.25,
+  flatStakeAmount: 50,
+  fixedPercentagePct: 2,
+};
+
+function betSizingStatus() {
+  const stored = getSetting(getDb(DEFAULT_DB_PATH), BET_SIZING_SETTING);
+  if (!stored) return { ...DEFAULT_BET_SIZING };
+  try {
+    return { ...DEFAULT_BET_SIZING, ...JSON.parse(stored) };
+  } catch {
+    return { ...DEFAULT_BET_SIZING };
+  }
+}
+
+app.get("/api/settings/bet-sizing", (req, res) => {
+  res.json(betSizingStatus());
+});
+
+app.post("/api/settings/bet-sizing", (req, res) => {
+  const { bankrollAmount, kellyFraction, flatStakeAmount, fixedPercentagePct } = req.body || {};
+  const current = betSizingStatus();
+  const next = {
+    bankrollAmount: bankrollAmount != null ? Number(bankrollAmount) : current.bankrollAmount,
+    kellyFraction: kellyFraction != null ? Number(kellyFraction) : current.kellyFraction,
+    flatStakeAmount: flatStakeAmount != null ? Number(flatStakeAmount) : current.flatStakeAmount,
+    fixedPercentagePct: fixedPercentagePct != null ? Number(fixedPercentagePct) : current.fixedPercentagePct,
+  };
+  for (const [key, val] of Object.entries(next)) {
+    if (!Number.isFinite(val) || val < 0) {
+      return res.status(400).json({ error: `${key} must be a non-negative number` });
+    }
+  }
+  if (next.kellyFraction > 1) {
+    return res.status(400).json({ error: "kellyFraction must be between 0 and 1" });
+  }
+  setSetting(getDb(DEFAULT_DB_PATH), BET_SIZING_SETTING, JSON.stringify(next));
+  res.status(200).json(next);
+});
+
 // Phase 5: manually-recorded trades and their automatic resolution.
 app.get("/api/trades", (req, res) => {
   const { status, marketSlug } = req.query;

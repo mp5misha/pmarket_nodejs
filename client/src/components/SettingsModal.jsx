@@ -33,6 +33,13 @@ export default function SettingsModal({ onClose, onStatusChange }) {
   const [templateError, setTemplateError] = useState(null);
   const [templateNote, setTemplateNote] = useState(null);
 
+  // Phase 6: bet-sizing configuration for the Kelly/flat/fixed-percentage
+  // stake calculator on a market's detail panel.
+  const [betSizingDraft, setBetSizingDraft] = useState(null);
+  const [savingBetSizing, setSavingBetSizing] = useState(false);
+  const [betSizingError, setBetSizingError] = useState(null);
+  const [betSizingNote, setBetSizingNote] = useState(null);
+
   const refreshStatus = async () => {
     try {
       const s = await api.getDeepSeekKeyStatus();
@@ -58,6 +65,14 @@ export default function SettingsModal({ onClose, onStatusChange }) {
       setModelStatus(await api.getDeepSeekModelStatus());
     } catch (err) {
       setModelError(err.message);
+    }
+  };
+
+  const refreshBetSizing = async () => {
+    try {
+      setBetSizingDraft(await api.getBetSizing());
+    } catch (err) {
+      setBetSizingError(err.message);
     }
   };
 
@@ -94,8 +109,23 @@ export default function SettingsModal({ onClose, onStatusChange }) {
     refreshPrompt();
     refreshModel();
     refreshTemplates();
+    refreshBetSizing();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const saveBetSizing = async () => {
+    setSavingBetSizing(true);
+    setBetSizingError(null);
+    setBetSizingNote(null);
+    try {
+      setBetSizingDraft(await api.setBetSizing(betSizingDraft));
+      setBetSizingNote("Bet-sizing settings saved.");
+    } catch (err) {
+      setBetSizingError(err.message);
+    } finally {
+      setSavingBetSizing(false);
+    }
+  };
 
   const saveTemplate = async () => {
     if (!templateNameDraft.trim() || !templateTextDraft.trim()) return;
@@ -448,6 +478,74 @@ export default function SettingsModal({ onClose, onStatusChange }) {
                 </button>
                 <button className="btn" onClick={savePrompt} disabled={savingPrompt || !promptDraft.trim()}>
                   {savingPrompt ? "Saving…" : "Save prompt"}
+                </button>
+              </div>
+            </>
+          )}
+
+          <hr className="modal-divider" />
+
+          <p className="settings-label">Bet sizing</p>
+          <p className="settings-hint">
+            Used by the "Suggested stake" calculator on a market's detail panel. Bankroll here is a
+            plain number for sizing suggestions against — a full bankroll (currency, per-bet cap,
+            auto-deduct, ledger) is configured separately.
+          </p>
+          {betSizingDraft && (
+            <>
+              <label className="settings-field-label" htmlFor="bs-bankroll">
+                Bankroll for sizing suggestions ($)
+              </label>
+              <input
+                id="bs-bankroll"
+                type="number"
+                min={0}
+                value={betSizingDraft.bankrollAmount}
+                onChange={(e) => setBetSizingDraft({ ...betSizingDraft, bankrollAmount: Number(e.target.value) })}
+              />
+              <label className="settings-field-label" htmlFor="bs-kelly">
+                Kelly fraction (0–1, default 0.25)
+              </label>
+              <input
+                id="bs-kelly"
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={betSizingDraft.kellyFraction}
+                onChange={(e) => setBetSizingDraft({ ...betSizingDraft, kellyFraction: Number(e.target.value) })}
+              />
+              <label className="settings-field-label" htmlFor="bs-flat">
+                Flat stake amount ($)
+              </label>
+              <input
+                id="bs-flat"
+                type="number"
+                min={0}
+                value={betSizingDraft.flatStakeAmount}
+                onChange={(e) => setBetSizingDraft({ ...betSizingDraft, flatStakeAmount: Number(e.target.value) })}
+              />
+              <label className="settings-field-label" htmlFor="bs-fixed">
+                Fixed percentage of bankroll (%)
+              </label>
+              <input
+                id="bs-fixed"
+                type="number"
+                min={0}
+                max={100}
+                step={0.5}
+                value={betSizingDraft.fixedPercentagePct}
+                onChange={(e) =>
+                  setBetSizingDraft({ ...betSizingDraft, fixedPercentagePct: Number(e.target.value) })
+                }
+              />
+
+              {betSizingError && <p className="sync-error">{betSizingError}</p>}
+              {betSizingNote && <p className="settings-note">{betSizingNote}</p>}
+
+              <div className="modal-actions">
+                <button className="btn" onClick={saveBetSizing} disabled={savingBetSizing}>
+                  {savingBetSizing ? "Saving…" : "Save bet-sizing settings"}
                 </button>
               </div>
             </>

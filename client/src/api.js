@@ -206,4 +206,15 @@ export const api = {
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
     }),
   checkTradeResolutions: () => fetch(`${BASE}/trades/check-resolutions`, { method: "POST" }).then(handle),
+
+  // Bet-sizing configuration (Phase 6) — bankroll amount, Kelly fraction,
+  // flat stake, fixed percentage. `bankrollAmount` is superseded by a full
+  // bankroll system in Phase 7, but the same setting carries forward.
+  getBetSizing: () => fetch(`${BASE}/settings/bet-sizing`).then(handle),
+  setBetSizing: (params) =>
+    fetch(`${BASE}/settings/bet-sizing`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    }).then(handle),
 };

@@ -9,6 +9,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { api } from "../api.js";
+import { kellyStake, flatStake, fixedPercentageStake } from "../lib/kelly.js";
 
 function fmtRelatedPrice(v) {
   return v === null || v === undefined ? "—" : Number(v).toFixed(3);
@@ -62,6 +63,12 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
   const [tradeError, setTradeError] = useState(null);
   const [lastSavedTrade, setLastSavedTrade] = useState(null);
 
+  // Bet-size suggestion (Phase 6) — fractional Kelly plus flat-stake and
+  // fixed-percentage alternatives, all configured in Settings.
+  const [betSizing, setBetSizing] = useState(null);
+  const [sizingMethod, setSizingMethod] = useState("kelly");
+  const [estimatedProbPct, setEstimatedProbPct] = useState("");
+
   const selectedAnalysis = analyses.find((a) => a.id === selectedAnalysisId) || null;
   const thread = selectedAnalysis ? buildThread(analyses, selectedAnalysis.id) : [];
 
@@ -90,6 +97,22 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
       })
       .catch(() => {
         if (!cancelled) setPromptTemplates(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Bet-sizing config likewise doesn't depend on which market is selected.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .getBetSizing()
+      .then((s) => {
+        if (!cancelled) setBetSizing(s);
+      })
+      .catch(() => {
+        if (!cancelled) setBetSizing(null);
       });
     return () => {
       cancelled = true;
@@ -188,6 +211,8 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
     setTradeStake("");
     setTradeNote("");
     setTradeError(null);
+    setSizingMethod("kelly");
+    setEstimatedProbPct("");
     setTradeFormOpen(true);
   };
 
@@ -195,7 +220,31 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
     setTradeSide(side);
     const price = side === "yes" ? market.current_price : market.no_price;
     setTradeEntryPrice(price != null ? String(price) : "");
+    // A probability estimate typed for one side doesn't carry over correctly
+    // to the other (it would silently mean the wrong thing) — clear it.
+    setEstimatedProbPct("");
   };
+
+  const sizingPrice = tradeSide === "yes" ? market.current_price : market.no_price;
+  const sizingSuggestion = (() => {
+    if (!betSizing || sizingPrice == null) return null;
+    if (sizingMethod === "kelly") {
+      if (estimatedProbPct === "") return null;
+      const p = Number(estimatedProbPct) / 100;
+      if (!Number.isFinite(p)) return null;
+      return kellyStake({
+        estimatedProb: p,
+        price: sizingPrice,
+        bankroll: betSizing.bankrollAmount,
+        kellyFraction: betSizing.kellyFraction,
+      });
+    }
+    if (sizingMethod === "flat") return flatStake({ flatStakeAmount: betSizing.flatStakeAmount });
+    if (sizingMethod === "fixed") {
+      return fixedPercentageStake({ bankroll: betSizing.bankrollAmount, fixedPercentagePct: betSizing.fixedPercentagePct });
+    }
+    return null;
+  })();
 
   const submitTrade = async () => {
     const entryPrice = Number(tradeEntryPrice);
@@ -309,6 +358,60 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
                 onChange={(e) => setTradeStake(e.target.value)}
               />
             </div>
+
+            {betSizing && (
+              <div className="bet-sizing">
+                <div className="field-pair">
+                  <select value={sizingMethod} onChange={(e) => setSizingMethod(e.target.value)}>
+                    <option value="kelly">Fractional Kelly</option>
+                    <option value="flat">Flat stake</option>
+                    <option value="fixed">Fixed % of bankroll</option>
+                  </select>
+                  {sizingMethod === "kelly" && (
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={1}
+                      placeholder={`Your est. % for ${tradeSide.toUpperCase()}`}
+                      value={estimatedProbPct}
+                      onChange={(e) => setEstimatedProbPct(e.target.value)}
+                    />
+                  )}
+                </div>
+                {sizingSuggestion && (
+                  <div className="bet-sizing-breakdown">
+                    {sizingSuggestion.method === "kelly" && (
+                      <p className="bet-sizing-meta">
+                        Edge: {(sizingSuggestion.edge * 100).toFixed(1)}pp · Full Kelly:{" "}
+                        {(sizingSuggestion.fullKellyFraction * 100).toFixed(1)}% · Applied (
+                        {(betSizing.kellyFraction * 100).toFixed(0)}% fraction):{" "}
+                        {(sizingSuggestion.appliedFraction * 100).toFixed(2)}% of $
+                        {betSizing.bankrollAmount.toLocaleString()} bankroll
+                      </p>
+                    )}
+                    {sizingSuggestion.method === "fixed-percentage" && (
+                      <p className="bet-sizing-meta">
+                        {betSizing.fixedPercentagePct}% of ${betSizing.bankrollAmount.toLocaleString()} bankroll
+                      </p>
+                    )}
+                    {sizingSuggestion.method === "flat" && (
+                      <p className="bet-sizing-meta">Flat stake, configured in Settings</p>
+                    )}
+                    <p className="bet-sizing-suggested">
+                      Suggested stake: ${sizingSuggestion.stake.toFixed(2)}{" "}
+                      <button
+                        className="link-button"
+                        onClick={() => setTradeStake(sizingSuggestion.stake.toFixed(2))}
+                      >
+                        Use this stake
+                      </button>
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
             <input
               type="text"
               placeholder="Note (optional)"

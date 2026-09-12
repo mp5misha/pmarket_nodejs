@@ -213,6 +213,30 @@ P&L uses the same buy-side formula as the profitability tracking in a later
 section: for a stake `s` at entry price `p`, `payout = s / p` if the trade's
 side won, else `0`; `profit = payout - s`.
 
+### Suggested stake (Express/SQLite only)
+
+Inside **Mark as traded**, a **Suggested stake** calculator offers three
+methods, all configured in ⚙ **Settings → Bet sizing**:
+
+- **Fractional Kelly** — enter your own estimated probability that the side
+  you're trading wins; the suggestion is `((estimate - price) / (1 - price))
+  × kellyFraction × bankroll` (the standard binary-Kelly formula, simplified
+  for a share bought at `price` with a $1 payout on a win). A negative edge
+  (your estimate is below the market price) suggests $0 rather than betting
+  against your own edge. `kellyFraction` defaults to 0.25 (quarter-Kelly, a
+  common way to reduce variance from full Kelly's aggressive sizing).
+- **Flat stake** — always the same configured dollar amount.
+- **Fixed percentage** — a fixed percentage of the configured bankroll,
+  regardless of edge.
+
+Every suggestion shows its full breakdown (edge, full-Kelly fraction, the
+fraction actually applied, and the resulting dollar amount) before you click
+**Use this stake** to copy it into the Stake field — nothing is auto-filled
+without that click. The "bankroll" here is a plain configured number for
+sizing purposes; Phase 7 (below) adds a full bankroll with currency, a
+per-bet cap, auto-deduct, and a ledger, building on this same setting rather
+than replacing it.
+
 ## Market Discovery (Express/SQLite only)
 
 The **Market Discovery** tab (next to **All Markets**) is a configurable
