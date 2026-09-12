@@ -40,6 +40,13 @@ routes and skips the login screen entirely rather than showing one with
 nowhere for it to lead. For every feature built since Phase 1, deploy
 `server/` instead (see the two options below).
 
+**Function count:** the Hobby plan caps a deployment at 12 serverless
+functions; `api/**/*.js` is deliberately kept at exactly that limit (a
+dynamic route file like `api/settings/[key].js` counts once regardless of
+how many values that segment matches — that's why `deepseek-key` and
+`deepseek-prompt` share one file instead of one each). Adding a new file
+under `api/` needs either removing/merging another one first or a Pro plan.
+
 **1. Provision a free Postgres database (Neon, via Vercel's own integration):**
 - In your Vercel project → **Storage** tab → **Create Database** → **Neon**
   (Postgres). Follow the prompts; it's free at this scale.
