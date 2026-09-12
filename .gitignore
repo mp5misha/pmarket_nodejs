@@ -2,3 +2,10 @@ node_modules/
 dist/
 *.db
 package-lock.json
+
+# Secrets — never commit real env values. .env.example files (checked in on
+# purpose, as documentation of the expected variable names) are exempted.
+.env
+.env.*
+!.env.example
+!*.env.example
