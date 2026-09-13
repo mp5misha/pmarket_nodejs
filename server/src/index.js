@@ -480,7 +480,7 @@ app.get("/api/markets", (req, res) => {
 // (flat, ungrouped) since CSV export and the bulk price-refresh selection
 // still depend on that shape.
 app.get("/api/markets/grouped", (req, res) => {
-  const { search, status, sortBy, minVolume, minPrice, maxPrice, tag, page, pageSize } = req.query;
+  const { search, status, sortBy, minVolume, minPrice, maxPrice, tag, myTrades, page, pageSize } = req.query;
   const result = queryMarketsGrouped(getDb(DEFAULT_DB_PATH), {
     search,
     status,
@@ -489,6 +489,7 @@ app.get("/api/markets/grouped", (req, res) => {
     minPrice: minPrice !== undefined && minPrice !== "" ? Number(minPrice) : null,
     maxPrice: maxPrice !== undefined && maxPrice !== "" ? Number(maxPrice) : null,
     tag: tag || undefined,
+    hasTrade: myTrades === "true" || myTrades === "1",
     page: page ? Number(page) : 1,
     pageSize: pageSize ? Number(pageSize) : 25,
     userId: getOptionalUserId(req),

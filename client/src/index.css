@@ -317,6 +317,12 @@ a.btn {
   color: var(--ink);
 }
 
+.my-trades-filter {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
 .result-count {
   font-size: 12.5px;
   color: var(--ink-soft);
@@ -418,6 +424,14 @@ table.ledger tbody tr.selected {
   gap: 10px;
 }
 
+/* The grid table has grown wide enough (13 columns, including the "My
+ * trade …" ones) that it can exceed the main panel's width — scope the
+ * horizontal scroll to the table itself rather than letting it push out the
+ * whole page. */
+.grid-table-wrap {
+  overflow-x: auto;
+}
+
 .grid-toolbar {
   display: flex;
   align-items: center;
@@ -484,6 +498,29 @@ table.ledger tbody tr.highlighted-row {
 
 table.ledger tbody tr.highlighted-row:hover {
   background: rgba(60, 122, 94, 0.15);
+}
+
+/* My trade price beats the market's current price for that side (i.e. the
+ * position is currently profitable) vs. the market having moved against it. */
+table.ledger tbody tr.trade-row-up {
+  background: rgba(60, 122, 94, 0.14);
+}
+
+table.ledger tbody tr.trade-row-up:hover {
+  background: rgba(60, 122, 94, 0.2);
+}
+
+table.ledger tbody tr.trade-row-down {
+  background: rgba(156, 74, 58, 0.12);
+}
+
+table.ledger tbody tr.trade-row-down:hover {
+  background: rgba(156, 74, 58, 0.18);
+}
+
+.my-trade-cell {
+  font-size: 12.5px;
+  white-space: nowrap;
 }
 
 .resolved-badge {

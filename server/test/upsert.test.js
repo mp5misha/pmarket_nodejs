@@ -12,6 +12,8 @@ import {
   queryMarketsGrouped,
   createAnalysis,
   createUser,
+  createTrade,
+  resolveTrade,
 } from "../src/db.js";
 
 const dbPath = path.join(os.tmpdir(), `upsert-test-${Date.now()}-${process.pid}.db`);
@@ -191,4 +193,68 @@ test("queryMarketsGrouped surfaces each market's newest analysis (including foll
 
   assert.equal(withAnalysis.last_analysis_text, "Follow-up final verdict");
   assert.equal(withoutAnalysis.last_analysis_text, null);
+});
+
+test("queryMarketsGrouped surfaces each market's most recent trade, scoped per user", () => {
+  const owner = createUser(db, { email: "grid-trade-owner@example.com", passwordHash: "x" });
+  const otherUser = createUser(db, { email: "grid-trade-other@example.com", passwordHash: "x" });
+
+  upsertMarket(db, { slug: "grid-with-trade", question: "Q1", currentPrice: 0.5, noPrice: 0.5, active: true, closed: false });
+  upsertMarket(db, { slug: "grid-without-trade", question: "Q2", currentPrice: 0.5, noPrice: 0.5, active: true, closed: false });
+
+  createTrade(db, owner.id, {
+    marketSlug: "grid-with-trade",
+    side: "no",
+    entryPrice: 0.4,
+    stake: 20,
+    placedAt: "2024-01-01T00:00:00.000Z",
+  });
+  createTrade(db, owner.id, {
+    marketSlug: "grid-with-trade",
+    side: "no",
+    entryPrice: 0.654,
+    stake: 20,
+    placedAt: "2024-02-01T00:00:00.000Z",
+  });
+  // Another user's trade on the *other* market must not leak into owner's view.
+  createTrade(db, otherUser.id, {
+    marketSlug: "grid-without-trade",
+    side: "yes",
+    entryPrice: 0.3,
+    stake: 10,
+    placedAt: "2024-01-01T00:00:00.000Z",
+  });
+
+  const rows = queryMarketsGrouped(db, { userId: owner.id }).groups.flatMap((g) => g.markets);
+  const withTrade = rows.find((m) => m.slug === "grid-with-trade");
+  const withoutTrade = rows.find((m) => m.slug === "grid-without-trade");
+
+  // The later of the two trades on the same market wins.
+  assert.equal(withTrade.my_trade_side, "no");
+  assert.equal(withTrade.my_trade_entry_price, 0.654);
+  assert.equal(withTrade.my_trade_stake, 20);
+  assert.equal(withoutTrade.my_trade_id, null);
+
+  const onlyMine = queryMarketsGrouped(db, { userId: owner.id, hasTrade: true }).groups.flatMap((g) => g.markets);
+  assert.ok(onlyMine.some((m) => m.slug === "grid-with-trade"));
+  assert.ok(!onlyMine.some((m) => m.slug === "grid-without-trade"));
+});
+
+test("queryMarketsGrouped reports a resolved trade's stored profit rather than a live estimate", () => {
+  const owner = createUser(db, { email: "grid-trade-resolved@example.com", passwordHash: "x" });
+  upsertMarket(db, { slug: "grid-resolved-trade", question: "Q3", currentPrice: 0.9, noPrice: 0.1, active: false, closed: true });
+
+  const trade = createTrade(db, owner.id, {
+    marketSlug: "grid-resolved-trade",
+    side: "yes",
+    entryPrice: 0.5,
+    stake: 10,
+    placedAt: "2024-01-01T00:00:00.000Z",
+  });
+  resolveTrade(db, trade.id, { status: "won", payout: 20, profit: 10 });
+
+  const rows = queryMarketsGrouped(db, { userId: owner.id }).groups.flatMap((g) => g.markets);
+  const row = rows.find((m) => m.slug === "grid-resolved-trade");
+  assert.equal(row.my_trade_status, "won");
+  assert.equal(row.my_trade_profit, 10);
 });

@@ -86,8 +86,10 @@ export function upsertMarket(db, market, { minPrice = null, maxPrice = null } = 
 const SORTABLE = new Set(["volume", "liquidity", "current_price", "resolution_date", "closed"]);
 
 /** Shared WHERE-clause builder for queryMarkets/queryMarketsGrouped — keeps
- * the two filter sets from drifting apart. */
-function buildMarketFilters({ search, status, minVolume, minPrice, maxPrice, tag }) {
+ * the two filter sets from drifting apart. `hasTrade`'s clause references
+ * @userId, which every caller already binds (for LATEST_TRADE_SELECT), so
+ * it doesn't need to appear in this function's own params. */
+function buildMarketFilters({ search, status, minVolume, minPrice, maxPrice, tag, hasTrade }) {
   const clauses = [];
   const params = {};
   if (search) {
@@ -122,6 +124,9 @@ function buildMarketFilters({ search, status, minVolume, minPrice, maxPrice, tag
   if (tag) {
     clauses.push("tags LIKE @tag");
     params.tag = `%"${tag}"%`;
+  }
+  if (hasTrade) {
+    clauses.push("EXISTS (SELECT 1 FROM trades WHERE trades.market_slug = markets.slug AND trades.user_id = @userId)");
   }
   return { clauses, params };
 }
@@ -171,6 +176,30 @@ const LATEST_ANALYSIS_SELECT = `
      ORDER BY created_at DESC LIMIT 1) AS last_analysis_at
 `;
 
+/** Same correlated-subquery approach as LATEST_ANALYSIS_SELECT, but for this
+ * user's own most recent trade (by placed_at) on each market — powers the
+ * grid's "My trade price"/"My trade date"/"My trade profit" columns and its
+ * row highlighting. `trades` is scoped by user_id, so needs @userId bound
+ * same as above. Profit/highlighting for an *open* trade is computed
+ * client-side from the live current_price/no_price already in the row
+ * (my_trade_profit here is only the stored, resolution-time figure). */
+const LATEST_TRADE_SELECT = `
+  (SELECT id FROM trades WHERE trades.market_slug = markets.slug AND trades.user_id = @userId
+     ORDER BY placed_at DESC, id DESC LIMIT 1) AS my_trade_id,
+  (SELECT side FROM trades WHERE trades.market_slug = markets.slug AND trades.user_id = @userId
+     ORDER BY placed_at DESC, id DESC LIMIT 1) AS my_trade_side,
+  (SELECT entry_price FROM trades WHERE trades.market_slug = markets.slug AND trades.user_id = @userId
+     ORDER BY placed_at DESC, id DESC LIMIT 1) AS my_trade_entry_price,
+  (SELECT stake FROM trades WHERE trades.market_slug = markets.slug AND trades.user_id = @userId
+     ORDER BY placed_at DESC, id DESC LIMIT 1) AS my_trade_stake,
+  (SELECT placed_at FROM trades WHERE trades.market_slug = markets.slug AND trades.user_id = @userId
+     ORDER BY placed_at DESC, id DESC LIMIT 1) AS my_trade_placed_at,
+  (SELECT status FROM trades WHERE trades.market_slug = markets.slug AND trades.user_id = @userId
+     ORDER BY placed_at DESC, id DESC LIMIT 1) AS my_trade_status,
+  (SELECT profit FROM trades WHERE trades.market_slug = markets.slug AND trades.user_id = @userId
+     ORDER BY placed_at DESC, id DESC LIMIT 1) AS my_trade_profit
+`;
+
 /** Same filters as queryMarkets, but groups the matching markets by their
  * Polymarket event (a standalone market with no event is its own
  * single-market group) and paginates over GROUPS rather than raw rows —
@@ -188,16 +217,20 @@ export function queryMarketsGrouped(
     minPrice,
     maxPrice,
     tag,
+    hasTrade,
     page = 1,
     pageSize = 25,
     userId,
   } = {}
 ) {
-  const { clauses, params } = buildMarketFilters({ search, status, minVolume, minPrice, maxPrice, tag });
+  const { clauses, params } = buildMarketFilters({ search, status, minVolume, minPrice, maxPrice, tag, hasTrade });
   const sortCol = SORTABLE.has(sortBy) ? sortBy : "volume";
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const rows = db
-    .prepare(`SELECT markets.*, ${LATEST_ANALYSIS_SELECT} FROM markets ${where} ORDER BY ${sortCol} DESC NULLS LAST`)
+    .prepare(
+      `SELECT markets.*, ${LATEST_ANALYSIS_SELECT}, ${LATEST_TRADE_SELECT}
+       FROM markets ${where} ORDER BY ${sortCol} DESC NULLS LAST`
+    )
     .all({ ...params, userId });
 
   const groupOrder = [];

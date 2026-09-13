@@ -8,7 +8,7 @@ export default async function handler(req, res) {
   try {
     const pool = getPool();
     await ensureSchema(pool);
-    const { search, status, sortBy, minVolume, minPrice, maxPrice, tag, page, pageSize } = req.query;
+    const { search, status, sortBy, minVolume, minPrice, maxPrice, tag, myTrades, page, pageSize } = req.query;
     const result = await queryMarketsGrouped(pool, {
       search,
       status,
@@ -17,6 +17,7 @@ export default async function handler(req, res) {
       minPrice: minPrice !== undefined && minPrice !== "" ? Number(minPrice) : null,
       maxPrice: maxPrice !== undefined && maxPrice !== "" ? Number(maxPrice) : null,
       tag: tag || undefined,
+      hasTrade: myTrades === "true" || myTrades === "1",
       page: page ? Number(page) : 1,
       pageSize: pageSize ? Number(pageSize) : 25,
     });

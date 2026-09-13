@@ -91,6 +91,7 @@ function MainApp({ user, onLogout }) {
   const [maxPrice, setMaxPrice] = useState("");
   const [tag, setTag] = useState("");
   const [tags, setTags] = useState([]);
+  const [myTradesOnly, setMyTradesOnly] = useState(false);
 
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
@@ -112,6 +113,7 @@ function MainApp({ user, onLogout }) {
       minPrice: minPrice === "" ? undefined : minPrice,
       maxPrice: maxPrice === "" ? undefined : maxPrice,
       tag: tag || undefined,
+      myTrades: myTradesOnly || undefined,
       page,
       pageSize,
     },
@@ -182,7 +184,7 @@ function MainApp({ user, onLogout }) {
     setPage(1);
     setSelectedSlugs(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, status, sortBy, minVolume, minPrice, maxPrice, tag, pageSize]);
+  }, [search, status, sortBy, minVolume, minPrice, maxPrice, tag, myTradesOnly, pageSize]);
 
   // The selected market is fetched independently of the current page's rows
   // — pagination or a filter change shouldn't lose the detail panel, and a
@@ -375,12 +377,20 @@ function MainApp({ user, onLogout }) {
                   %
                 </label>
               )}
+              <label className="field-row my-trades-filter">
+                <input
+                  type="checkbox"
+                  checked={myTradesOnly}
+                  onChange={(e) => setMyTradesOnly(e.target.checked)}
+                />
+                My trade markets
+              </label>
             </div>
 
             {refreshError && <p className="sync-error">{refreshError}</p>}
             {deleteError && <p className="sync-error">{deleteError}</p>}
 
-            {!loading && totalMarkets === 0 && groups.length === 0 && !search && !status && !tag ? (
+            {!loading && totalMarkets === 0 && groups.length === 0 && !search && !status && !tag && !myTradesOnly ? (
               <div className="empty-state">
                 No markets stored yet. Use <strong>Run sync</strong> in the sidebar to fetch from Polymarket.
               </div>

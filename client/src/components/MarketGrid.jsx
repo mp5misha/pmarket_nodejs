@@ -13,6 +13,16 @@ function fmtMoney(v) {
   return `$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
 
+// Same as fmtMoney but keeps cents (a trade's profit is often a few dollars
+// and needs the precision) and puts a "-" before the "$" for a loss instead
+// of after it.
+function fmtTradeMoney(v) {
+  if (v === null || v === undefined) return "—";
+  const n = Number(v);
+  const sign = n < 0 ? "-" : "";
+  return `${sign}$${Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 function fmtDate(v) {
   if (!v) return "—";
   const d = new Date(v);
@@ -34,6 +44,51 @@ function fmtDateTime(v) {
   if (Number.isNaN(d.getTime())) return String(v);
   const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Same as fmtDateTime but "YYYY/MM/DD HH:MM" (no comma) — the format asked
+// for specifically for the "My trade date" column.
+function fmtTradeDateTime(v) {
+  if (!v) return "—";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return String(v);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// The market's live price for whichever side (Yes/No) a trade was placed on
+// — needed to compare against the trade's entry price and to mark an open
+// trade's position to market.
+function priceForSide(market, side) {
+  return (side || "").toLowerCase() === "no" ? market.no_price : market.current_price;
+}
+
+// "'No' @ $0.654 by $20.00 amount" — side, entry price, and stake for this
+// market's most recent trade (see LATEST_TRADE_SELECT in db.js/lib/db.js).
+function fmtTradeSummary(market) {
+  if (market.my_trade_id == null) return null;
+  const side = market.my_trade_side || "";
+  const label = side.charAt(0).toUpperCase() + side.slice(1).toLowerCase();
+  const price = Number(market.my_trade_entry_price).toFixed(3);
+  const stake = Number(market.my_trade_stake).toFixed(2);
+  return `'${label}' @ $${price} by $${stake} amount`;
+}
+
+// A resolved trade's profit is whatever was locked in at resolution; an
+// still-open one is marked to the market's current live price for that side
+// (shares bought = stake / entry price, same formula the server uses for a
+// won trade's payout).
+function tradeProfit(market) {
+  if (market.my_trade_id == null) return null;
+  if (market.my_trade_status && market.my_trade_status !== "open") {
+    return market.my_trade_profit;
+  }
+  const entryPrice = Number(market.my_trade_entry_price);
+  const stake = Number(market.my_trade_stake);
+  const currentPrice = priceForSide(market, market.my_trade_side);
+  if (!entryPrice || currentPrice == null) return null;
+  const shares = stake / entryPrice;
+  return shares * currentPrice - stake;
 }
 
 const ANALYSIS_PREVIEW_LENGTH = 140;
@@ -69,14 +124,29 @@ function SelectAllCheckbox({ checked, indeterminate, onChange }) {
 
 function MarketRow({ market, isNested, selectedSlug, onSelectMarket, selectedSlugs, onToggleSelect, highlightThreshold }) {
   const impliedYes = market.current_price;
-  const highlighted = highlightThreshold != null && impliedYes != null && impliedYes >= highlightThreshold;
+  const hasTrade = market.my_trade_id != null;
+  // A trade's own price comparison takes priority over the generic
+  // implied-probability highlight when both would apply to the same row —
+  // it's the more specific, personally-relevant signal.
+  const highlighted = !hasTrade && highlightThreshold != null && impliedYes != null && impliedYes >= highlightThreshold;
+  let tradeRowClass = "";
+  if (hasTrade) {
+    const entryPrice = Number(market.my_trade_entry_price);
+    const currentPrice = priceForSide(market, market.my_trade_side);
+    if (currentPrice != null) {
+      if (entryPrice < currentPrice) tradeRowClass = "trade-row-up";
+      else if (entryPrice > currentPrice) tradeRowClass = "trade-row-down";
+    }
+  }
   const classes = [
     market.slug === selectedSlug ? "selected" : "",
     isNested ? "nested-row" : "",
     highlighted ? "highlighted-row" : "",
+    tradeRowClass,
   ]
     .filter(Boolean)
     .join(" ");
+  const profit = tradeProfit(market);
 
   return (
     <tr className={classes} onClick={() => onSelectMarket(market.slug)}>
@@ -118,6 +188,11 @@ function MarketRow({ market, isNested, selectedSlug, onSelectMarket, selectedSlu
       </td>
       <td className="updated-cell">
         {market.closed ? <span className="resolved-badge">Resolved</span> : fmtDateTime(market.last_updated)}
+      </td>
+      <td className="my-trade-cell">{fmtTradeSummary(market) || "—"}</td>
+      <td>{hasTrade ? fmtTradeDateTime(market.my_trade_placed_at) : "—"}</td>
+      <td className={profit > 0 ? "trades-profit-positive" : profit < 0 ? "trades-profit-negative" : ""}>
+        {profit != null ? fmtTradeMoney(profit) : "—"}
       </td>
     </tr>
   );
@@ -242,41 +317,46 @@ export default function MarketGrid({
           )}
         </div>
       ) : (
-        <table className="ledger grid-table">
-          <thead>
-            <tr>
-              <th className="select-col">
-                <SelectAllCheckbox
-                  checked={allSelected}
-                  indeterminate={someSelected && !allSelected}
-                  onChange={onToggleSelectAll}
+        <div className="grid-table-wrap">
+          <table className="ledger grid-table">
+            <thead>
+              <tr>
+                <th className="select-col">
+                  <SelectAllCheckbox
+                    checked={allSelected}
+                    indeterminate={someSelected && !allSelected}
+                    onChange={onToggleSelectAll}
+                  />
+                </th>
+                <th>Event / Market</th>
+                <th className="num">Yes price</th>
+                <th className="num">No price</th>
+                <th className="num">Implied prob.</th>
+                <th className="num">Volume</th>
+                <th className="num">Liquidity</th>
+                <th>Resolves</th>
+                <th>AI analysis results</th>
+                <th>Updated</th>
+                <th>My trade price</th>
+                <th>My trade date</th>
+                <th>My trade profit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map((group) => (
+                <GroupRows
+                  key={group.key}
+                  group={group}
+                  selectedSlug={selectedSlug}
+                  onSelectMarket={onSelectMarket}
+                  selectedSlugs={selectedSlugs}
+                  onToggleSelect={onToggleSelect}
+                  highlightThreshold={highlightThreshold}
                 />
-              </th>
-              <th>Event / Market</th>
-              <th className="num">Yes price</th>
-              <th className="num">No price</th>
-              <th className="num">Implied prob.</th>
-              <th className="num">Volume</th>
-              <th className="num">Liquidity</th>
-              <th>Resolves</th>
-              <th>AI analysis results</th>
-              <th>Updated</th>
-            </tr>
-          </thead>
-          <tbody>
-            {groups.map((group) => (
-              <GroupRows
-                key={group.key}
-                group={group}
-                selectedSlug={selectedSlug}
-                onSelectMarket={onSelectMarket}
-                selectedSlugs={selectedSlugs}
-                onToggleSelect={onToggleSelect}
-                highlightThreshold={highlightThreshold}
-              />
-            ))}
-          </tbody>
-        </table>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {total > 0 && (

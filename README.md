@@ -355,8 +355,26 @@ everything that account owns to you; it's safe to click more than once
   market shows a "Resolved" badge in the Updated column instead of a
   timestamp. A **Highlight ≥ N%** field (Express/SQLite only) tints any row
   whose implied Yes probability is at or above that percentage — the value
-  is saved server-side and persists across restarts. Click any row to open
-  its detail panel below.
+  is saved server-side and persists across restarts.
+
+  Three more columns cover your own trading activity on a market (see
+  **Trades** below for how a trade gets recorded in the first place): **My
+  trade price** shows the side, entry price, and stake of your most recent
+  trade on that market, e.g. `'No' @ $0.654 by $20.00 amount`; **My trade
+  date** shows when it was placed (`YYYY/MM/DD HH:MM`, local time); **My
+  trade profit** shows its profit — for a trade still open, this is a live
+  mark-to-market estimate (shares bought, `stake / entry price`, valued at
+  the market's current price for that side), and for a resolved trade it's
+  the actual profit locked in when it resolved. All three show "—" for a
+  market you haven't traded. A market with a trade also gets its row tinted
+  green if your entry price is *lower* than the market's current price for
+  that side (the position is up) or red if it's *higher* (the position is
+  down) — this takes priority over the **Highlight ≥ N%** tint on the same
+  row, being the more specific, personal signal. A **My trade markets**
+  checkbox in the filter bar limits the grid to only markets you've traded
+  (server-side, via the same `hasTrade` filter as every other grid filter).
+
+  Click any row to open its detail panel below.
 - **Bulk actions** — check one or more rows (the header checkbox selects/
   clears every row on the current page), then either **Update selected
   prices** (re-fetches just those markets' current price, volume, and
