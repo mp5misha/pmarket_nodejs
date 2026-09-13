@@ -78,6 +78,15 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     }).then(handle),
+  // Re-parses a market-kind analysis's already-stored result_text for the
+  // trailing "FAIR_PROBABILITY_YES: <decimal>" line and persists whatever
+  // it finds, without calling DeepSeek again — powers the "Parse the AI
+  // response" button, for backfilling an analysis run before that
+  // instruction existed or retrying one the model didn't follow the first
+  // time. On Vercel this shares a file with followUpAnalysis's route (see
+  // api/analyses/[id]/[action].js) to stay within the function budget.
+  parseFairProbability: (id) =>
+    req(`${BASE}/analyses/${id}/parse-fair-probability`, { method: "POST" }).then(handle),
   // "AI analysis of Whales activity" — a second, independent analysis
   // stream on the same market/route, selected via kind: "whales" (see
   // server/src/index.js's /api/markets/:slug/analyze and .../analyses).

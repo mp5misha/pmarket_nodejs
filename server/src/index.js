@@ -32,6 +32,7 @@ import {
   findCachedAnalysis,
   createAnalysis,
   getAnalysis,
+  updateAnalysisFairProb,
   listAnalysesForMarket,
   getAnalysisThread,
   listPromptTemplates,
@@ -718,6 +719,28 @@ app.post("/api/analyses/:id/follow-up", requireAuth, async (req, res) => {
   } catch (err) {
     res.status(502).json({ error: String(err.message ?? err) });
   }
+});
+
+// Re-parses a market-kind analysis's already-stored result_text for the
+// trailing "FAIR_PROBABILITY_YES: <decimal>" line and persists whatever it
+// finds — for backfilling analyses run before that instruction existed, or
+// retrying one where the model didn't follow it the first time. Doesn't
+// call DeepSeek again; it's a pure re-read of text already on the row. Only
+// meaningful for kind: "market" — the grid's "AI fair YES %"/"AI fair NO %"
+// columns only ever read from that stream (see LATEST_ANALYSIS_SELECT).
+app.post("/api/analyses/:id/parse-fair-probability", requireAuth, (req, res) => {
+  const db = getDb(DEFAULT_DB_PATH);
+  const analysis = getAnalysis(db, req.userId, req.params.id);
+  if (!analysis) return res.status(404).json({ error: "Analysis not found" });
+  if (analysis.kind !== "market") {
+    return res.status(400).json({ error: "Only a market analysis has a fair-probability line to parse." });
+  }
+  const fairProbYes = extractFairProbability(analysis.result_text);
+  if (fairProbYes == null) {
+    return res.status(422).json({ error: "No \"FAIR_PROBABILITY_YES: <decimal>\" line found in this response." });
+  }
+  const saved = updateAnalysisFairProb(db, req.userId, analysis.id, fairProbYes);
+  res.json({ analysis: saved });
 });
 
 app.get("/api/markets/:slug/analyses", requireAuth, (req, res) => {

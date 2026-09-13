@@ -712,6 +712,20 @@ question doesn't restate this line, so the grid keeps showing the latest
 analysis that *did* include one rather than blanking out a good earlier
 estimate.
 
+A **Parse the AI response** button next to **Re-run** re-reads the
+currently-selected analysis (pick one from the **History** dropdown first)
+for that same line and (re)stores whatever it finds — without calling
+DeepSeek again. This is for backfilling an analysis run before the
+`FAIR_PROBABILITY_YES` instruction existed, or retrying one where the model
+didn't follow it the first time; clicking it on a response with no such line
+shows an error rather than silently doing nothing. It only applies to
+market-kind analyses (an "AI analysis of Whales activity" response has
+nothing to parse, since the grid's fair-probability columns never read from
+that stream). `POST /api/analyses/:id/parse-fair-probability` shares its
+Vercel function with the follow-up route (`api/analyses/[id]/[action].js`,
+dispatching on the `action` path segment) to stay within the 12-function
+budget.
+
 ### Whale activity analysis
 
 A market's detail panel offers a separate **AI analysis of Whales activity**

@@ -760,6 +760,14 @@ export function getAnalysis(db, userId, id) {
   return db.prepare("SELECT * FROM ai_analysis WHERE id = ? AND user_id = ?").get(id, userId);
 }
 
+/** Overwrites one analysis row's fair_prob_yes — used by the "Parse the AI
+ * response" button to (re)apply extractFairProbability's regex against a
+ * result_text that's already stored, without calling DeepSeek again. */
+export function updateAnalysisFairProb(db, userId, id, fairProbYes) {
+  db.prepare("UPDATE ai_analysis SET fair_prob_yes = ? WHERE id = ? AND user_id = ?").run(fairProbYes, id, userId);
+  return getAnalysis(db, userId, id);
+}
+
 export function listAnalysesForMarket(db, userId, marketSlug, kind = "market") {
   return db
     .prepare("SELECT * FROM ai_analysis WHERE market_slug = ? AND user_id = ? AND kind = ? ORDER BY created_at DESC")

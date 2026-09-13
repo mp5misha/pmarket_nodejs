@@ -11,6 +11,8 @@ import {
   deleteMarkets,
   queryMarketsGrouped,
   createAnalysis,
+  getAnalysis,
+  updateAnalysisFairProb,
   createUser,
   createTrade,
   resolveTrade,
@@ -415,6 +417,48 @@ test("queryMarketsGrouped's fair_prob_yes survives a follow-up that didn't resta
   assert.equal(row.last_analysis_text, "follow-up reply, no fair prob restated");
   // ...but fair_prob_yes still reflects the last row that actually had one.
   assert.equal(row.fair_prob_yes, 0.7);
+});
+
+test("updateAnalysisFairProb overwrites fair_prob_yes on the given row and is reflected by queryMarketsGrouped", () => {
+  const owner = createUser(db, { email: "parse-fair-prob@example.com", passwordHash: "x" });
+  upsertMarket(db, { slug: "parse-fair-prob-market", question: "PF1", currentPrice: 0.5, noPrice: 0.5, active: true, closed: false });
+
+  const analysis = createAnalysis(db, owner.id, {
+    marketSlug: "parse-fair-prob-market",
+    promptText: "p1",
+    inputHash: "pfp1",
+    modelName: "m",
+    resultText: "an older analysis, run before FAIR_PROBABILITY_YES existed",
+    kind: "market",
+    // fairProbYes omitted — the scenario "Parse the AI response" backfills.
+  });
+  assert.equal(analysis.fair_prob_yes, null);
+
+  const updated = updateAnalysisFairProb(db, owner.id, analysis.id, 0.81);
+  assert.equal(updated.fair_prob_yes, 0.81);
+  assert.equal(getAnalysis(db, owner.id, analysis.id).fair_prob_yes, 0.81);
+
+  const rows = queryMarketsGrouped(db, { userId: owner.id }).groups.flatMap((g) => g.markets);
+  assert.equal(rows.find((m) => m.slug === "parse-fair-prob-market").fair_prob_yes, 0.81);
+});
+
+test("updateAnalysisFairProb is scoped to user_id — cannot overwrite another user's analysis", () => {
+  const owner = createUser(db, { email: "parse-fair-prob-owner2@example.com", passwordHash: "x" });
+  const intruder = createUser(db, { email: "parse-fair-prob-intruder@example.com", passwordHash: "x" });
+  upsertMarket(db, { slug: "parse-fair-prob-market2", question: "PF2", currentPrice: 0.5, noPrice: 0.5, active: true, closed: false });
+
+  const analysis = createAnalysis(db, owner.id, {
+    marketSlug: "parse-fair-prob-market2",
+    promptText: "p1",
+    inputHash: "pfp2",
+    modelName: "m",
+    resultText: "owner's analysis",
+    kind: "market",
+  });
+
+  const result = updateAnalysisFairProb(db, intruder.id, analysis.id, 0.55);
+  assert.equal(result, undefined);
+  assert.equal(getAnalysis(db, owner.id, analysis.id).fair_prob_yes, null);
 });
 
 test("listTrades includes the market's live current/no price via a LEFT JOIN, surviving a deleted market", () => {

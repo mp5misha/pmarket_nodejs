@@ -94,6 +94,14 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
   const [loadingFollowUp, setLoadingFollowUp] = useState(false);
   const [followUpError, setFollowUpError] = useState(null);
 
+  // "Parse the AI response" — re-reads the selected market-kind analysis's
+  // already-stored result_text for its "FAIR_PROBABILITY_YES: <decimal>"
+  // line and persists whatever it finds, without calling DeepSeek again.
+  // For backfilling an analysis run before that instruction existed, or
+  // retrying one the model didn't follow the first time.
+  const [parsingFairProb, setParsingFairProb] = useState(false);
+  const [parseFairProbNote, setParseFairProbNote] = useState(null);
+
   const [related, setRelated] = useState([]);
 
   // Manually-recorded trades (Phase 5).
@@ -128,6 +136,7 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
     setLastWasCached(false);
     setFollowUpText("");
     setFollowUpError(null);
+    setParseFairProbNote(null);
     setWhaleAnalyses([]);
     setSelectedWhaleAnalysisId(null);
     setWhaleAnalysisError(null);
@@ -246,6 +255,7 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
   const runAnalysis = async (force) => {
     setLoadingAnalysis(true);
     setAnalysisError(null);
+    setParseFairProbNote(null);
     try {
       const { analysis, cached } = await api.analyzeMarket(market.slug, {
         force,
@@ -277,6 +287,24 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
       setFollowUpError(err.message);
     } finally {
       setLoadingFollowUp(false);
+    }
+  };
+
+  const parseFairProbability = async () => {
+    if (!selectedAnalysisId) return;
+    setParsingFairProb(true);
+    setParseFairProbNote(null);
+    try {
+      const { analysis } = await api.parseFairProbability(selectedAnalysisId);
+      setAnalyses((prev) => prev.map((a) => (a.id === analysis.id ? analysis : a)));
+      setParseFairProbNote({
+        ok: true,
+        text: `Parsed: ${(analysis.fair_prob_yes * 100).toFixed(1)}% fair YES — now on the All Markets grid.`,
+      });
+    } catch (err) {
+      setParseFairProbNote({ ok: false, text: err.message });
+    } finally {
+      setParsingFairProb(false);
     }
   };
 
@@ -753,6 +781,16 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
                 Re-run
               </button>
             )}
+            {selectedAnalysisId && (
+              <button
+                className="btn btn-small btn-ghost"
+                onClick={parseFairProbability}
+                disabled={parsingFairProb}
+                title='Re-reads the selected response above for a "FAIR_PROBABILITY_YES: <decimal>" line and stores it, without calling DeepSeek again'
+              >
+                {parsingFairProb ? "Parsing…" : "Parse the AI response"}
+              </button>
+            )}
           </div>
         </div>
         {analysisError && (
@@ -765,6 +803,9 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
             )}
           </p>
         )}
+        {parseFairProbNote && (
+          <p className={parseFairProbNote.ok ? "discovery-note" : "sync-error"}>{parseFairProbNote.text}</p>
+        )}
 
         {analyses.length > 1 && (
           <div className="ai-analysis-history">
@@ -772,7 +813,10 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
             <select
               id="analysis-picker"
               value={selectedAnalysisId ?? ""}
-              onChange={(e) => setSelectedAnalysisId(Number(e.target.value))}
+              onChange={(e) => {
+                setSelectedAnalysisId(Number(e.target.value));
+                setParseFairProbNote(null);
+              }}
             >
               {analyses.map((a) => (
                 <option key={a.id} value={a.id}>
