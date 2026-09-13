@@ -1172,6 +1172,15 @@ table.ledger tbody tr.trade-row-down:hover {
   font-size: 12px;
 }
 
+.discovery-table a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.discovery-table a:hover {
+  text-decoration: underline;
+}
+
 .discovery-row-actions {
   display: flex;
   gap: 6px;

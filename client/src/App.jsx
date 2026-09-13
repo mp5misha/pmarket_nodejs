@@ -5,6 +5,7 @@ import MarketGrid from "./components/MarketGrid.jsx";
 import MarketDetail from "./components/MarketDetail.jsx";
 import SettingsModal from "./components/SettingsModal.jsx";
 import MyTrades from "./components/MyTrades.jsx";
+import WhaleTrades from "./components/WhaleTrades.jsx";
 import AuthScreen, { VerifyEmailLanding, ResetPasswordLanding } from "./components/AuthScreen.jsx";
 import { useMarketGroups } from "./hooks/useMarketGroups.js";
 import { useCatalogFetch } from "./hooks/useCatalogFetch.js";
@@ -311,10 +312,18 @@ function MainApp({ user, onLogout }) {
           >
             My Trades
           </button>
+          <button
+            className={`view-tab ${view === "whales" ? "active" : ""}`}
+            onClick={() => setView("whales")}
+          >
+            Whales trades
+          </button>
         </div>
 
         {view === "trades" ? (
           <MyTrades />
+        ) : view === "whales" ? (
+          <WhaleTrades />
         ) : (
           <>
             <h2>Polymarket Markets</h2>

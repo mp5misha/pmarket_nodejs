@@ -45,6 +45,17 @@ export const api = {
   related: (slug) => req(`${BASE}/markets/${encodeURIComponent(slug)}/related`).then(handle),
   // See stats() above re: /api/meta/tags vs. /api/tags.
   tags: () => req(`${BASE}/meta/tags`).then(handle),
+  // Top-50 leaderboard traders' current positions, aggregated server-side
+  // (see server/src/whales.js / lib/whales.js) — powers the "Whales trades"
+  // tab. No Express-only alias needed here; unlike stats/tags this route
+  // never had its own dedicated path, so both backends serve it at
+  // /api/meta/whales.
+  whales: (params = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== undefined && v !== "" && v !== null)
+    ).toString();
+    return req(`${BASE}/meta/whales${qs ? `?${qs}` : ""}`).then(handle);
+  },
   // Asks DeepSeek to analyze one market's real probability and background —
   // can take a while (up to a minute or so), so no client-side timeout here.
   // Without force, a completed analysis with identical inputs (market +

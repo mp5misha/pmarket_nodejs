@@ -75,6 +75,7 @@ import {
 } from "./db.js";
 import { fetchPriceHistory } from "./polymarket.js";
 import { runSyncStep, refreshMarketPrices, runFullSync } from "./sync.js";
+import { fetchWhalePositions } from "./whales.js";
 import {
   analyzeMarket,
   askFollowUp,
@@ -436,10 +437,23 @@ app.get("/api/stats", (req, res) => {
 // one function (api/meta/[key].js) to fit the Hobby plan's function-count
 // budget. Express has no such constraint, so both old and new paths work
 // here.
-app.get("/api/meta/:key", (req, res) => {
+app.get("/api/meta/:key", async (req, res) => {
   const db = getDb(DEFAULT_DB_PATH);
   if (req.params.key === "stats") return res.json(getStats(db));
   if (req.params.key === "tags") return res.json(getTags(db));
+  if (req.params.key === "whales") {
+    try {
+      const { limit, timePeriod, orderBy } = req.query;
+      const result = await fetchWhalePositions({
+        limit: limit ? Number(limit) : 50,
+        timePeriod: timePeriod || undefined,
+        orderBy: orderBy || undefined,
+      });
+      return res.json(result);
+    } catch (err) {
+      return res.status(500).json({ error: String(err.message ?? err) });
+    }
+  }
   if (req.params.key === "export") {
     const rows = getAllForExport(db);
     if (!rows.length) return res.status(404).send("No data to export yet");

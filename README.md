@@ -58,7 +58,9 @@ endpoints share one physical file: `api/settings/[key].js` serves
 `api/tags.js`, `api/export.js` — merged here to make room for
 `api/markets/[slug]/analyses.js`, which took the freed slot; both Express
 routes for each merged pair, old path and new `/api/meta/*` alias, stay in
-place). **Only single dynamic segments are used for this** (`[key].js`, or
+place) — and now also `whales` (the **Whales trades** tab's data, see
+below), which never had its own file at all; it went straight into this
+same merged endpoint since the budget was already full when it was added. **Only single dynamic segments are used for this** (`[key].js`, or
 a `[slug]/` folder containing plain static filenames like
 `api/markets/[slug]/analyze.js`) — never a catch-all (`[...x].js` or
 `[[...x]].js`). An earlier version of this deploy tried consolidating
@@ -509,6 +511,40 @@ exist on `server/` (Express/SQLite), just with no UI in front of them;
 `/api/saved-searches` and `/api/fetch-runs` still respond there for anyone
 calling them directly. The sidebar's **Run sync** (ad hoc, unsaved) still
 works exactly as before on both backends.
+
+## Whales trades
+
+The **Whales trades** tab shows what Polymarket's biggest traders currently
+hold — the current open positions of the top 50 traders on Polymarket's own
+public leaderboard, ranked by volume or profit over a chosen window (today/
+this week/this month/all time). This is live data pulled straight from
+Polymarket on each load (with a 2-minute server-side cache — see below), not
+anything synced into this app's own database, so it has nothing to do with
+the sidebar's "Run sync" or the markets grid.
+
+Each row is one whale's one position: trader (their leaderboard display name
+if they have one, otherwise a shortened wallet address, with their total
+leaderboard volume underneath), market (linking to that event on
+polymarket.com), outcome side, size, average entry price, current price,
+live position value, and unrealized P&L (colored green/red). A summary line
+above the table reports how many traders and positions were returned, and
+how many wallets (if any) failed to load and were skipped rather than
+failing the whole request. The **Refresh** button re-fetches immediately;
+otherwise it refreshes whenever you change the time window or ranking.
+
+Implementation notes: Polymarket's leaderboard and per-wallet positions come
+from its public "Data API" (`data-api.polymarket.com`), which — unlike the
+Gamma/CLOB APIs the rest of this app uses — has no officially published
+schema, so `fetchLeaderboard`/`fetchUserPositions` (`server/src/
+polymarket.js` / `lib/polymarket.js`) read every field defensively with
+fallback names. `server/src/whales.js` / `lib/whales.js` fan out to each of
+the 50 wallets' positions endpoints concurrently (6 at a time, mirroring the
+sync worker-queue pattern), merge and sort the results by live position
+value, and cache the aggregate for 2 minutes so opening the tab repeatedly
+doesn't re-run ~50 external requests every time. Both backends serve this at
+`/api/meta/whales` (see **Function count** above — it went straight into the
+already-merged `api/meta/[key].js` on Vercel rather than getting its own
+file, since the 12-function budget had no room left).
 
 ## AI analysis (DeepSeek)
 

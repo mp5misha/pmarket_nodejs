@@ -1,4 +1,5 @@
 import { getPool, ensureSchema, getStats, getTags, getAllForExport } from "../../lib/db.js";
+import { fetchWhalePositions } from "../../lib/whales.js";
 
 // A single dynamic FILE at one directory level (`api/meta/[key].js`) — the
 // same proven shape as api/settings/[key].js, which already merges routes
@@ -17,6 +18,15 @@ export default async function handler(req, res) {
     }
     if (req.query.key === "tags") {
       return res.status(200).json(await getTags(pool));
+    }
+    if (req.query.key === "whales") {
+      const { limit, timePeriod, orderBy } = req.query;
+      const result = await fetchWhalePositions({
+        limit: limit ? Number(limit) : 50,
+        timePeriod: timePeriod || undefined,
+        orderBy: orderBy || undefined,
+      });
+      return res.status(200).json(result);
     }
     if (req.query.key === "export") {
       const rows = await getAllForExport(pool);

@@ -1,5 +1,10 @@
 const GAMMA_BASE = "https://gamma-api.polymarket.com";
 const CLOB_BASE = "https://clob.polymarket.com";
+// Polymarket's public "Data API" — powers polymarket.com's own leaderboard
+// and portfolio pages. No API key needed, but (unlike Gamma/CLOB above)
+// there's no official published schema for it, so every field below is read
+// defensively with fallback names rather than assumed exact.
+const DATA_API_BASE = "https://data-api.polymarket.com";
 const PAGE_SIZE = 500;
 const REQUEST_TIMEOUT_MS = 20000;
 const RETRY_LIMIT = 3;
@@ -126,6 +131,50 @@ export async function* fetchAllMarkets({ maxMarkets = null, active = true, close
 export async function fetchPriceHistory(tokenId, interval = "max") {
   const data = await getJson(`${CLOB_BASE}/prices-history`, { market: tokenId, interval });
   return data.history ?? [];
+}
+
+/** Top traders by volume or P&L over a time window, from Polymarket's own
+ * leaderboard — powers the "Whales trades" tab (see whales.js). `limit` is
+ * capped at 50 by the API itself, conveniently matching "top-50 traders".
+ * The response envelope/field names aren't officially documented, so this
+ * accepts a plain array or a couple of likely wrapper shapes, and reads each
+ * row's fields with fallbacks. */
+export async function fetchLeaderboard({ timePeriod = "DAY", orderBy = "VOL", limit = 50 } = {}) {
+  const data = await getJson(`${DATA_API_BASE}/v1/leaderboard`, { timePeriod, orderBy, limit });
+  const rows = Array.isArray(data) ? data : data?.traders ?? data?.results ?? data?.leaderboard ?? [];
+  return rows
+    .map((r) => ({
+      wallet: r.proxyWallet ?? r.wallet ?? r.address ?? r.user ?? null,
+      name: r.name ?? r.userName ?? r.pseudonym ?? r.displayName ?? null,
+      pnl: safeFloat(r.pnl),
+      volume: safeFloat(r.vol ?? r.volume),
+    }))
+    .filter((r) => r.wallet);
+}
+
+/** One wallet's current open positions, biggest (by live USD value) first —
+ * same undocumented Data API as fetchLeaderboard. */
+export async function fetchUserPositions(wallet, { limit = 10 } = {}) {
+  const data = await getJson(`${DATA_API_BASE}/positions`, {
+    user: wallet,
+    limit,
+    sortBy: "CURRENT",
+    sizeThreshold: 1,
+  });
+  const rows = Array.isArray(data) ? data : [];
+  return rows.map((r) => ({
+    conditionId: r.conditionId ?? null,
+    slug: r.slug ?? null,
+    eventSlug: r.eventSlug ?? null,
+    title: r.title ?? null,
+    outcome: r.outcome ?? null,
+    size: safeFloat(r.size),
+    avgPrice: safeFloat(r.avgPrice),
+    curPrice: safeFloat(r.curPrice),
+    currentValue: safeFloat(r.currentValue),
+    cashPnl: safeFloat(r.cashPnl),
+    percentPnl: safeFloat(r.percentPnl),
+  }));
 }
 
 function safeFloat(v) {
