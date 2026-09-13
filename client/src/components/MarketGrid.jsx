@@ -151,6 +151,7 @@ export default function MarketGrid({
   onToggleSelect,
   onToggleSelectAll,
   highlightThreshold,
+  statusFilter,
 }) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const allMarkets = groups.flatMap((g) => g.markets);
@@ -193,7 +194,17 @@ export default function MarketGrid({
       {error && <p className="sync-error">{error}</p>}
 
       {!loading && total === 0 ? (
-        <div className="empty-state">No markets match these filters yet.</div>
+        <div className="empty-state">
+          No markets match these filters yet.
+          {statusFilter === "closed" && (
+            <>
+              {" "}
+              If you expect resolved markets here, try <strong>Run sync</strong> in the sidebar with
+              status set to <strong>All</strong> or <strong>Closed only</strong> — a market's stored
+              status only updates when it's actually re-synced.
+            </>
+          )}
+        </div>
       ) : (
         <table className="ledger grid-table">
           <thead>

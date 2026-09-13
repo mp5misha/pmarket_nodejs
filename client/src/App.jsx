@@ -123,6 +123,8 @@ function MainApp({ user, onLogout }) {
   const [selectedSlugs, setSelectedSlugs] = useState(() => new Set());
   const [refreshing, setRefreshing] = useState(false);
   const [refreshError, setRefreshError] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [deepseekStatus, setDeepseekStatus] = useState(null);
   const [view, setView] = useState("markets");
@@ -245,6 +247,27 @@ function MainApp({ user, onLogout }) {
     }
   };
 
+  // Removes the checked rows from the local catalog entirely — e.g.
+  // clearing out resolved markets you don't want cluttering the grid
+  // anymore. Doesn't touch any trades recorded against those slugs.
+  const deleteSelectedMarkets = async () => {
+    if (selectedSlugs.size === 0) return;
+    const count = selectedSlugs.size;
+    if (!window.confirm(`Delete ${count} market(s) from the catalog? This can't be undone.`)) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await api.deleteMarkets([...selectedSlugs]);
+      setSelectedSlugs(new Set());
+      if (selectedSlug && selectedSlugs.has(selectedSlug)) setSelectedSlug(null);
+      await Promise.all([refetchGrid(), refreshStats()]);
+    } catch (err) {
+      setDeleteError(err.message);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   // Thin wrapper around useCatalogFetch's run() for the sidebar's "Run
   // sync" button.
   const startSync = async (params) => {
@@ -355,6 +378,7 @@ function MainApp({ user, onLogout }) {
             </div>
 
             {refreshError && <p className="sync-error">{refreshError}</p>}
+            {deleteError && <p className="sync-error">{deleteError}</p>}
 
             {!loading && totalMarkets === 0 && groups.length === 0 && !search && !status && !tag ? (
               <div className="empty-state">
@@ -367,10 +391,17 @@ function MainApp({ user, onLogout }) {
                     <span className="selected-count">{selectedSlugs.size} selected</span>
                     <button
                       className="btn btn-small"
-                      disabled={selectedSlugs.size === 0 || refreshing}
+                      disabled={selectedSlugs.size === 0 || refreshing || deleting}
                       onClick={updateSelectedPrices}
                     >
                       {refreshing ? "Updating…" : "Update selected prices"}
+                    </button>
+                    <button
+                      className="btn btn-small btn-ghost"
+                      disabled={selectedSlugs.size === 0 || refreshing || deleting}
+                      onClick={deleteSelectedMarkets}
+                    >
+                      {deleting ? "Deleting…" : "Delete selected"}
                     </button>
                   </div>
                 </div>
@@ -394,6 +425,7 @@ function MainApp({ user, onLogout }) {
                   onToggleSelect={toggleSelectMarket}
                   onToggleSelectAll={toggleSelectAllMarkets}
                   highlightThreshold={highlightThresholdPct != null ? highlightThresholdPct / 100 : null}
+                  statusFilter={status}
                 />
               </>
             )}

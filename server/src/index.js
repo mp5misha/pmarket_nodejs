@@ -10,6 +10,7 @@ import {
   queryMarkets,
   queryMarketsGrouped,
   getMarket,
+  deleteMarkets,
   getMarketsByEvent,
   getStats,
   getAllForExport,
@@ -1036,6 +1037,35 @@ app.post("/api/markets/refresh", requireAuth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: String(err.message ?? err) });
   }
+});
+
+// /api/markets/bulk: same refresh (POST) plus delete (DELETE) — the Vercel
+// deploy's mirror of these routes (api/markets/bulk.js) merges them under
+// one name since that file already had the Hobby-plan function-count
+// budget it needed (see README's "Function count" section), so the shared
+// client calls this path on both backends. /api/markets/refresh above stays
+// for back-compat.
+app.post("/api/markets/bulk", requireAuth, async (req, res) => {
+  const { slugs } = req.body || {};
+  if (!Array.isArray(slugs) || slugs.length === 0) {
+    return res.status(400).json({ error: "slugs must be a non-empty array" });
+  }
+  try {
+    const result = await refreshMarketPrices({ dbPath: DEFAULT_DB_PATH, slugs });
+    res.status(200).json(result);
+  } catch (err) {
+    res.status(500).json({ error: String(err.message ?? err) });
+  }
+});
+
+app.delete("/api/markets/bulk", requireAuth, (req, res) => {
+  const slugs = String(req.query.slugs || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (slugs.length === 0) return res.status(400).json({ error: "slugs must be a non-empty list" });
+  const deleted = deleteMarkets(getDb(DEFAULT_DB_PATH), [...new Set(slugs)]);
+  res.status(200).json({ deleted });
 });
 
 app.post("/api/sync/step", requireAuth, async (req, res) => {

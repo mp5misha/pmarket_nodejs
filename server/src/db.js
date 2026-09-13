@@ -222,6 +222,19 @@ export function getMarket(db, slug) {
   return db.prepare("SELECT * FROM markets WHERE slug = ?").get(slug);
 }
 
+/** Bulk-deletes markets from the local catalog by slug (e.g. clearing out
+ * resolved markets you no longer want cluttering the grid) — doesn't touch
+ * any trades recorded against those slugs, which keep their own history. */
+export function deleteMarkets(db, slugs) {
+  const del = db.transaction((values) => {
+    const stmt = db.prepare("DELETE FROM markets WHERE slug = ?");
+    let count = 0;
+    for (const slug of values) count += stmt.run(slug).changes;
+    return count;
+  });
+  return del(slugs);
+}
+
 export function getStats(db) {
   return db
     .prepare("SELECT COUNT(*) as count, MAX(last_updated) as lastUpdated FROM markets")

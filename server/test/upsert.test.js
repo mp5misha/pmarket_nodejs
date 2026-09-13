@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { getDb, upsertMarket, getMarket, getStats } from "../src/db.js";
+import { getDb, upsertMarket, getMarket, getStats, deleteMarkets } from "../src/db.js";
 
 const dbPath = path.join(os.tmpdir(), `upsert-test-${Date.now()}-${process.pid}.db`);
 let db;
@@ -95,4 +95,21 @@ test("upsertMarket is idempotent when re-run with identical data", () => {
     upsertMarket(db, { slug: "test-slug", question: "Q1 updated", currentPrice: 0.7, noPrice: 0.3, active: true, closed: false });
   }
   assert.equal(getStats(db).count, before);
+});
+
+test("deleteMarkets removes the given slugs and leaves others untouched", () => {
+  upsertMarket(db, { slug: "delete-me-1", question: "D1", currentPrice: 0.5, noPrice: 0.5, active: false, closed: true });
+  upsertMarket(db, { slug: "delete-me-2", question: "D2", currentPrice: 0.5, noPrice: 0.5, active: false, closed: true });
+  upsertMarket(db, { slug: "keep-me", question: "K", currentPrice: 0.5, noPrice: 0.5, active: true, closed: false });
+
+  const deleted = deleteMarkets(db, ["delete-me-1", "delete-me-2"]);
+  assert.equal(deleted, 2);
+  assert.equal(getMarket(db, "delete-me-1"), undefined);
+  assert.equal(getMarket(db, "delete-me-2"), undefined);
+  assert.ok(getMarket(db, "keep-me"));
+});
+
+test("deleteMarkets on an already-missing slug is a harmless no-op", () => {
+  const deleted = deleteMarkets(db, ["never-existed"]);
+  assert.equal(deleted, 0);
 });

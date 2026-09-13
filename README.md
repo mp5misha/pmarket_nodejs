@@ -63,17 +63,23 @@ function budget; catch-all routing is unreliable in a plain (non-Next.js)
 Vercel deployment like this one and it broke market details in production.
 Don't reintroduce it.
 
-`api/trades.js` uses a different trick: it's a single flat file with no
-dynamic segment at all — GET/POST `/api/trades` handle list/create, and
-delete/check-resolutions/analytics/export are dispatched via `?id=`/
-`?action=` query params instead of `/trades/:id`-style sub-paths. Express
+`api/trades.js` and `api/markets/bulk.js` use a different trick: they're
+single flat files with no dynamic segment at all. `api/trades.js`'s GET/POST
+`/api/trades` handle list/create, and delete/check-resolutions/analytics/
+export are dispatched via `?id=`/`?action=` query params instead of
+`/trades/:id`-style sub-paths. `api/markets/bulk.js` similarly answers
+POST (bulk-refresh selected slugs, body `{slugs}`) and DELETE (bulk-remove
+selected slugs, `?slugs=a,b,c` — a query param rather than a DELETE body,
+to avoid relying on Vercel parsing a JSON body on a DELETE the same way it
+does on POST, which isn't worth assuming untested) on the one file. Express
 answers the same query-param requests (`server/src/index.js`) alongside its
-own pre-existing path-based routes, so both deploy targets work off the
-same `client/src/api.js` URLs. `api/markets/index.js` (a flat, ungrouped
-market list) was deleted outright rather than merged — nothing in the
-client ever called it, `groupedMarkets`/`refreshMarkets` being the only
-consumers of `/api/markets/*`, so it was dead weight before the budget
-ever came into it.
+own pre-existing path-based routes (`/api/trades/:id` etc. and the original
+`/api/markets/refresh`, both left in place, unused but harmless), so both
+deploy targets work off the same `client/src/api.js` URLs. `api/markets/
+index.js` (a flat, ungrouped market list) was deleted outright rather than
+merged — nothing in the client ever called it, `groupedMarkets`/
+`refreshMarkets`/`deleteMarkets` being the only consumers of
+`/api/markets/*`, so it was dead weight before the budget ever came into it.
 
 If you need more budget than these tricks free up, either drop a route/
 feature or move to a Pro plan (100-function limit), and test any file-count
@@ -275,12 +281,15 @@ everything that account owns to you; it's safe to click more than once
 ## Using it
 
 - **Sidebar** — set how many markets to fetch; a market status filter (active
-  only, closed only, or both); a category/tag to scope the sync to (populated
-  from whatever's already been synced); a resolution date range to only sync
-  markets resolving in that window; and whether to also fetch price history
-  (needed for the min/max columns and the chart — it's slower, one extra API
-  call per market, with an editable delay between those calls to stay easy on
-  Polymarket's API). Click **Run sync** and a progress bar tracks it live.
+  only, closed only, or both — defaults to both, since an "active only" sync
+  never re-touches a market once it resolves on Polymarket's side, so its
+  stored status and price would otherwise go stale forever); a category/tag
+  to scope the sync to (populated from whatever's already been synced); a
+  resolution date range to only sync markets resolving in that window; and
+  whether to also fetch price history (needed for the min/max columns and
+  the chart — it's slower, one extra API call per market, with an editable
+  delay between those calls to stay easy on Polymarket's API). Click **Run
+  sync** and a progress bar tracks it live.
 - **Market grid** — search by keyword, filter by status (**All statuses** /
   **Active** / **Resolved**, applied server-side via `GET /api/markets/
   grouped`'s `status` param rather than filtering only what's already on the
@@ -303,10 +312,15 @@ everything that account owns to you; it's safe to click more than once
   SQLite only) tints any row whose implied Yes probability is at or above
   that percentage — the value is saved server-side and persists across
   restarts. Click any row to open its detail panel below.
-- **Bulk price update** — check one or more rows, then click **Update
-  selected prices** to re-fetch just those markets' current price, volume,
-  and liquidity from Polymarket without re-running a full sync. Any
-  previously-computed min/max and CLOB token id are left untouched.
+- **Bulk actions** — check one or more rows (the header checkbox selects/
+  clears every row on the current page), then either **Update selected
+  prices** (re-fetches just those markets' current price, volume, and
+  liquidity from Polymarket without re-running a full sync — any previously-
+  computed min/max and CLOB token id are left untouched) or **Delete
+  selected** (asks for confirmation, then removes those markets from the
+  local catalog entirely — e.g. clearing out resolved markets you don't
+  need anymore; doesn't touch any trades recorded against those slugs,
+  which keep their own history).
 - **Detail panel** — Yes/No price, volume, liquidity, resolution date, a
   **Related markets in this event** list (other markets sharing the same
   Polymarket event, e.g. other candidates in the same election — click one

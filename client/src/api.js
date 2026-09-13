@@ -98,10 +98,18 @@ export const api = {
   // Polymarket, in place of a full sync — used by the table's "Update
   // selected" action.
   refreshMarkets: (slugs) =>
-    req(`${BASE}/markets/refresh`, {
+    req(`${BASE}/markets/bulk`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ slugs }),
+    }).then(handle),
+  // Removes the given slugs from the local catalog entirely (e.g. clearing
+  // out resolved markets) — used by the table's "Delete selected" action.
+  // Slugs go in the query string, not a DELETE body, on both backends (see
+  // api/markets/bulk.js).
+  deleteMarkets: (slugs) =>
+    req(`${BASE}/markets/bulk?slugs=${slugs.map(encodeURIComponent).join(",")}`, {
+      method: "DELETE",
     }).then(handle),
   // One bounded chunk of a sync — the caller loops this, advancing offset,
   // until `done` comes back true. Same contract on both deploy targets

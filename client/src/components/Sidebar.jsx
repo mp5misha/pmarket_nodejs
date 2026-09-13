@@ -12,7 +12,14 @@ export default function Sidebar({
   onLogout,
 }) {
   const [limit, setLimit] = useState(500);
-  const [status, setStatus] = useState("active");
+  // Defaults to "all" (not "active only") so a routine sync keeps both
+  // active and resolved markets' active/closed flags and prices fresh —
+  // an "active only" sync never re-touches a market once it resolves on
+  // Polymarket's side (Gamma stops returning it for that query), so its
+  // stored `closed` flag and price go stale forever, which makes the grid's
+  // "Resolved" status filter look broken (missing or outdated markets)
+  // even though the filter query itself is correct.
+  const [status, setStatus] = useState("all");
   const [tag, setTag] = useState("");
   const [resolutionFrom, setResolutionFrom] = useState("");
   const [resolutionTo, setResolutionTo] = useState("");
