@@ -113,6 +113,20 @@ export default function MyTrades() {
     }
   };
 
+  // Runs once on mount so a trade's Open/Won/Lost state is fresh the moment
+  // this tab opens, without waiting for a manual click. This matters most
+  // on the Vercel deploy target: unlike Express (which also re-checks every
+  // 60s via a background setInterval — see server/src/index.js), a
+  // serverless function has no persistent process to run that on, so an
+  // open trade there only ever gets resolved when this endpoint is hit —
+  // previously that meant only via this same button, which itself was
+  // accidentally hidden whenever the bankroll dashboard (Express/SQLite
+  // only) failed to load, i.e. always, on Vercel.
+  useEffect(() => {
+    checkNow();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const removeTrade = async (id) => {
     try {
       await api.deleteTrade(id);
@@ -147,7 +161,20 @@ export default function MyTrades() {
 
   return (
     <div className="my-trades">
-      <h2>My Trades</h2>
+      <div className="my-trades-header">
+        <h2>My Trades</h2>
+        {/* Always rendered, regardless of whether the bankroll dashboard
+            below loaded — that data is Express/SQLite only, and this
+            button previously lived inside it, which meant it never
+            rendered at all on the Vercel deploy target (see the mount
+            effect above). This is the only thing that ever moves a trade
+            out of Open on Vercel, so it can't be conditional on anything
+            else loading first. */}
+        <button className="btn btn-small btn-ghost" onClick={checkNow} disabled={checking}>
+          {checking ? "Refreshing…" : "Refresh outcomes"}
+        </button>
+      </div>
+      {checkNote && <p className="discovery-note">{checkNote}</p>}
 
       {dashboard && (
         <div className="bankroll-dashboard">
@@ -170,16 +197,12 @@ export default function MyTrades() {
             <div className="value">{dashboard.exposurePct.toFixed(1)}%</div>
           </div>
           <div className="bankroll-actions">
-            <button className="btn btn-small btn-ghost" onClick={checkNow} disabled={checking}>
-              {checking ? "Checking…" : "Check resolutions now"}
-            </button>
             <button className="btn btn-small btn-ghost" onClick={() => setShowLedger((v) => !v)}>
               {showLedger ? "Hide ledger" : "Show ledger"}
             </button>
           </div>
         </div>
       )}
-      {checkNote && <p className="discovery-note">{checkNote}</p>}
 
       {showLedger && (
         <div className="bankroll-ledger-panel">

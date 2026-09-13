@@ -1252,6 +1252,18 @@ table.ledger tbody tr.whale-row:hover {
   margin-bottom: 24px;
 }
 
+.my-trades-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.my-trades-header h2 {
+  margin: 0;
+}
+
 .profitability-header {
   display: flex;
   align-items: center;

@@ -403,7 +403,7 @@ Click **Mark as traded** on a market's detail panel to record a manual
 trade: side (Yes/No, pre-filling that side's current price as the entry
 price — editable), stake, and an optional note. The **My Trades** tab lists
 every recorded trade with tabs for All/Open/Won/Lost, a running net P&L
-total, and a **Check resolutions now** button.
+total, and a **Refresh outcomes** button next to the tab's own heading.
 
 A trade's resolution check — refreshing the price/closed status of any
 market with an open trade, and once that market is closed and its Yes price
@@ -411,9 +411,16 @@ has settled to (near) 0 or 1, matching how Polymarket represents a final
 outcome, marking each open trade **Won** or **Lost** based on which side
 actually won — is the same on both backends; the difference is what
 triggers it. The Express/SQLite backend also runs it automatically every 60
-seconds (an in-process check); the frozen Vercel deploy has no background
-timer, so **Check resolutions now** (which runs the identical check
-immediately, on both backends) is the only way to resolve a trade there.
+seconds (an in-process `setInterval`); the frozen Vercel deploy has no
+background timer at all (a serverless function has no persistent process to
+run one on), so **Refresh outcomes** (which runs the identical check
+immediately, on both backends) is the only way a trade ever resolves there
+— it also runs once automatically whenever the **My Trades** tab is opened,
+so a trade's state is fresh without waiting for a click. (This button used
+to live inside the bankroll dashboard box, which only ever loads on
+Express/SQLite — meaning it never rendered at all on Vercel, silently
+defeating the "only way to resolve a trade there" from the previous
+paragraph. It's now always rendered, independent of the dashboard.)
 
 P&L uses the same buy-side formula as the profitability tracking in a later
 section: for a stake `s` at entry price `p`, `payout = s / p` if the trade's
