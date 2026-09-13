@@ -35,6 +35,17 @@ function whaleTraderLabel(position) {
   return w.length > 10 ? `${w.slice(0, 6)}…${w.slice(-4)}` : w;
 }
 
+// Normalizes a whale position's raw outcome text to a guaranteed "Yes"/"No"
+// label — the Data API's own outcome field is usually already "Yes"/"No"
+// for these binary markets, but isn't guaranteed to be capitalized (or
+// present) the same way every time.
+function whalePositionDirection(position) {
+  const o = (position.outcome || "").trim().toLowerCase();
+  if (o === "yes") return "Yes";
+  if (o === "no") return "No";
+  return position.outcome || "—";
+}
+
 // Walks an analysis's parent_analysis_id chain from root to `id`, using the
 // already-fetched flat list for this market (every ancestor of a follow-up
 // is always on the same market, so no extra request is needed).
@@ -577,6 +588,7 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
               <tr>
                 <th>Trader</th>
                 <th>Outcome</th>
+                <th>Position direction</th>
                 <th>Size</th>
                 <th>Price</th>
                 <th>Position value</th>
@@ -588,6 +600,7 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
                 <tr key={`${p.traderWallet}-${i}`}>
                   <td title={p.traderWallet || ""}>{whaleTraderLabel(p)}</td>
                   <td>{p.outcome || "—"}</td>
+                  <td>{whalePositionDirection(p)}</td>
                   <td className="num">{p.size != null ? Number(p.size).toLocaleString() : "—"}</td>
                   <td className="num">{fmtRelatedPrice(p.curPrice)}</td>
                   <td className="num">{fmtWhaleMoney(p.currentValue)}</td>

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell } from "recharts";
 import { api } from "../api.js";
 
 const TIME_PERIODS = [
@@ -6,6 +7,13 @@ const TIME_PERIODS = [
   { value: "WEEK", label: "This week" },
   { value: "MONTH", label: "This month" },
   { value: "ALL", label: "All time" },
+];
+
+const LEADERBOARD_SIZES = [
+  { value: 50, label: "Top 50" },
+  { value: 100, label: "Top 100" },
+  { value: 150, label: "Top 150" },
+  { value: 200, label: "Top 200" },
 ];
 
 // Same option set/labels/default as Sidebar.jsx's auto-sync dropdown, just
@@ -52,6 +60,15 @@ function eventUrl(base, position) {
   return `${base}/event/${encodeURIComponent(slug)}`;
 }
 
+// Same wallet-fallback rule as traderLabel, for a top-10-traders entry
+// ({ name, wallet }) rather than a position ({ traderName, traderWallet }).
+function topTraderLabel(t) {
+  if (t.name) return t.name;
+  const w = t.wallet;
+  if (!w) return "Unknown trader";
+  return w.length > 10 ? `${w.slice(0, 6)}…${w.slice(-4)}` : w;
+}
+
 /** Positions currently held by Polymarket's top-50 leaderboard traders
  * ("whales"), aggregated server-side from the public leaderboard + each
  * wallet's open positions (see server/src/whales.js / lib/whales.js). Each
@@ -63,6 +80,7 @@ function eventUrl(base, position) {
 export default function WhaleTrades() {
   const [timePeriod, setTimePeriod] = useState("DAY");
   const [orderBy, setOrderBy] = useState("VOL");
+  const [leaderboardSize, setLeaderboardSize] = useState(50);
   const [autoRefreshMs, setAutoRefreshMs] = useState(0);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -72,7 +90,7 @@ export default function WhaleTrades() {
     setLoading(true);
     setError(null);
     try {
-      setData(await api.whales({ timePeriod, orderBy, limit: 50 }));
+      setData(await api.whales({ timePeriod, orderBy, limit: leaderboardSize }));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -83,7 +101,7 @@ export default function WhaleTrades() {
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timePeriod, orderBy]);
+  }, [timePeriod, orderBy, leaderboardSize]);
 
   // Same ref-based interval pattern as Sidebar.jsx's auto-sync: refresh()
   // and loading are read through refs so the interval itself only needs to
@@ -104,15 +122,16 @@ export default function WhaleTrades() {
   }, [autoRefreshMs]);
 
   const positions = data?.positions ?? [];
+  const topTraders = data?.topTraders ?? [];
 
   return (
     <div className="whale-trades">
       <h2>Whales trades</h2>
       <p className="discovery-note">
-        Live open positions held by the top 50 traders on Polymarket's public leaderboard, ranked by{" "}
-        {orderBy === "PNL" ? "profit" : "volume"} for the selected window — refreshed from Polymarket
-        directly (unrelated to the sidebar's "Run sync"). Each successful rescan is saved to this
-        app's own database, so a temporary Polymarket outage falls back to the last known snapshot
+        Live open positions held by the top {leaderboardSize} traders on Polymarket's public leaderboard,
+        ranked by {orderBy === "PNL" ? "profit" : "volume"} for the selected window — refreshed from
+        Polymarket directly (unrelated to the sidebar's "Run sync"). Each successful rescan is saved to
+        this app's own database, so a temporary Polymarket outage falls back to the last known snapshot
         instead of showing nothing.
       </p>
 
@@ -127,6 +146,13 @@ export default function WhaleTrades() {
         <select value={orderBy} onChange={(e) => setOrderBy(e.target.value)}>
           <option value="VOL">Ranked by volume</option>
           <option value="PNL">Ranked by profit</option>
+        </select>
+        <select value={leaderboardSize} onChange={(e) => setLeaderboardSize(Number(e.target.value))}>
+          {LEADERBOARD_SIZES.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
+            </option>
+          ))}
         </select>
         <button className="btn btn-small btn-ghost" onClick={refresh} disabled={loading}>
           {loading ? "Refreshing…" : "Refresh"}
@@ -160,6 +186,50 @@ export default function WhaleTrades() {
             </span>
           )}
         </p>
+      )}
+
+      {topTraders.length > 0 && (
+        <div className="chart-block whale-top-traders">
+          <p className="chart-title">
+            Top 10 most profitable traders — realized P&amp;L for the selected window, from Polymarket's
+            own leaderboard stats
+          </p>
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={topTraders.map((t) => ({ ...t, label: topTraderLabel(t) }))}>
+              <CartesianGrid stroke="var(--rule)" strokeDasharray="2 4" />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={0} angle={-30} textAnchor="end" height={70} />
+              <YAxis tick={{ fontSize: 11 }} width={60} />
+              <Tooltip formatter={(v) => [`$${Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 })}`, "Realized P&L"]} />
+              <Bar dataKey="pnl">
+                {topTraders.map((t) => (
+                  <Cell key={t.rank} fill={(t.pnl ?? 0) >= 0 ? "var(--up)" : "var(--down)"} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+          <table className="discovery-table">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Trader</th>
+                <th>Realized P&amp;L</th>
+                <th>Volume</th>
+              </tr>
+            </thead>
+            <tbody>
+              {topTraders.map((t) => (
+                <tr key={t.rank}>
+                  <td className="num">{t.rank}</td>
+                  <td title={t.wallet || ""}>{topTraderLabel(t)}</td>
+                  <td className={t.pnl > 0 ? "trades-profit-positive" : t.pnl < 0 ? "trades-profit-negative" : ""}>
+                    {fmtMoney(t.pnl)}
+                  </td>
+                  <td className="num">{fmtMoney(t.volume)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {loading && !data ? (

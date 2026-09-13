@@ -1,7 +1,30 @@
 import { fetchLeaderboard, fetchUserPositions } from "./polymarket.js";
-import { replaceWhalePositions, getStoredWhalePositions } from "./db.js";
+import {
+  replaceWhalePositions,
+  getStoredWhalePositions,
+  replaceWhaleTopTraders,
+  getStoredWhaleTopTraders,
+} from "./db.js";
 
-// How many of each whale's biggest positions to pull in — top-50 traders ×
+// How many of the fetched leaderboard's traders to surface as "most
+// profitable" (by realized P&L, Polymarket's own `pnl` stat for the
+// selected time window) — independent of whether they currently hold a
+// position that made it into the positions list below.
+const TOP_TRADERS_COUNT = 10;
+
+/** Ranks a fetched leaderboard by realized P&L (descending) and takes the
+ * top `TOP_TRADERS_COUNT` — used for the "top-10 most profitable traders"
+ * chart/list, which cares about Polymarket's own profit stat rather than
+ * this app's live position values. */
+function computeTopTraders(traders) {
+  return [...traders]
+    .filter((t) => t.pnl != null)
+    .sort((a, b) => b.pnl - a.pnl)
+    .slice(0, TOP_TRADERS_COUNT)
+    .map((t, i) => ({ rank: i + 1, wallet: t.wallet, name: t.name, pnl: t.pnl, volume: t.volume }));
+}
+
+// How many of each whale's biggest positions to pull in — leaderboard size ×
 // this is the worst-case row count the tab has to render.
 const POSITIONS_PER_WHALE = 5;
 // Fetching 50 wallets' positions one at a time would be slow; this mirrors
@@ -21,19 +44,23 @@ const STALE_CACHE_TTL_MS = 20 * 1000;
 
 let cache = null; // { key, at, ttlMs, data }
 
-/** Top-50 leaderboard traders' current positions, biggest first — each row
- * tagged with which trader holds it. Per-wallet failures (a dead wallet, a
- * rate limit) are skipped rather than failing the whole request; the result
- * reports how many were skipped so the UI can say so.
+/** The requested leaderboard size's (default 50, up to 200 — see the
+ * Whales trades tab's dropdown) traders' current positions, biggest first —
+ * each row tagged with which trader holds it — plus the top 10 of those
+ * same traders by realized P&L (`topTraders`, independent of whether they
+ * hold a qualifying position). Per-wallet position-fetch failures (a dead
+ * wallet, a rate limit) are skipped rather than failing the whole request;
+ * the result reports how many were skipped so the UI can say so.
  *
  * Every actual rescan (i.e. not served from the in-memory cache above) is
- * persisted to the whale_positions table via replaceWhalePositions, so the
- * last successful scan survives a server restart. If the rescan itself
- * fails outright (e.g. the leaderboard call errors after retries), this
- * falls back to that stored snapshot — marked `stale: true` — instead of
- * throwing, so a transient Polymarket outage doesn't blank out the tab (or
- * the grid highlight/detail section built on top of it) when a perfectly
- * good last-known snapshot already exists. */
+ * persisted to the whale_positions/whale_top_traders tables via
+ * replaceWhalePositions/replaceWhaleTopTraders, so the last successful scan
+ * survives a server restart. If the rescan itself fails outright (e.g. the
+ * leaderboard call errors after retries), this falls back to that stored
+ * snapshot — marked `stale: true` — instead of throwing, so a transient
+ * Polymarket outage doesn't blank out the tab (or the grid highlight/detail
+ * section built on top of it) when a perfectly good last-known snapshot
+ * already exists. */
 export async function fetchWhalePositions(db, { limit = 50, timePeriod = "DAY", orderBy = "VOL" } = {}) {
   const key = JSON.stringify({ limit, timePeriod, orderBy });
   if (cache && cache.key === key && Date.now() - cache.at < cache.ttlMs) {
@@ -46,7 +73,7 @@ export async function fetchWhalePositions(db, { limit = 50, timePeriod = "DAY", 
   } catch (err) {
     const stored = getStoredWhalePositions(db);
     if (stored) {
-      const fallback = { ...stored, stale: true };
+      const fallback = { ...stored, topTraders: getStoredWhaleTopTraders(db)?.topTraders ?? [], stale: true };
       cache = { key, at: Date.now(), ttlMs: STALE_CACHE_TTL_MS, data: fallback };
       return fallback;
     }
@@ -88,15 +115,18 @@ export async function fetchWhalePositions(db, { limit = 50, timePeriod = "DAY", 
   if (traders.length > 0 && failedWalletCount === traders.length) {
     const stored = getStoredWhalePositions(db);
     if (stored) {
-      const fallback = { ...stored, stale: true };
+      const fallback = { ...stored, topTraders: getStoredWhaleTopTraders(db)?.topTraders ?? [], stale: true };
       cache = { key, at: Date.now(), ttlMs: STALE_CACHE_TTL_MS, data: fallback };
       return fallback;
     }
   }
 
   positions.sort((a, b) => (b.currentValue ?? 0) - (a.currentValue ?? 0));
-  const result = { positions, traderCount: traders.length, failedWalletCount, fetchedAt: new Date().toISOString() };
+  const fetchedAt = new Date().toISOString();
+  const topTraders = computeTopTraders(traders);
+  const result = { positions, topTraders, traderCount: traders.length, failedWalletCount, fetchedAt };
   replaceWhalePositions(db, result);
+  replaceWhaleTopTraders(db, { topTraders, fetchedAt });
   cache = { key, at: Date.now(), ttlMs: CACHE_TTL_MS, data: result };
   return result;
 }

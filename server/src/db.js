@@ -1137,3 +1137,48 @@ export function getStoredWhalePositions(db) {
     fetchedAt: rows[0].fetched_at,
   };
 }
+
+// Top-10-most-profitable-traders snapshot, computed alongside each whale
+// rescan from the same leaderboard fetch (see server/src/whales.js) —
+// Polymarket's own realized-P&L stat per trader, independent of whether
+// they currently hold a position that made it into whale_positions. Same
+// "replace the whole snapshot" pattern as replaceWhalePositions above.
+const WHALE_TOP_TRADERS_INSERT_SQL = `
+  INSERT INTO whale_top_traders (rank, wallet, name, pnl, volume, fetched_at)
+  VALUES (@rank, @wallet, @name, @pnl, @volume, @fetchedAt)
+`;
+
+export function replaceWhaleTopTraders(db, { topTraders, fetchedAt }) {
+  const insert = db.prepare(WHALE_TOP_TRADERS_INSERT_SQL);
+  const replace = db.transaction((rows) => {
+    db.prepare("DELETE FROM whale_top_traders").run();
+    for (const t of rows) {
+      insert.run({
+        rank: t.rank,
+        wallet: t.wallet ?? null,
+        name: t.name ?? null,
+        pnl: t.pnl ?? null,
+        volume: t.volume ?? null,
+        fetchedAt,
+      });
+    }
+  });
+  replace(topTraders);
+}
+
+/** The last successfully-persisted top-10-traders snapshot, or null if none
+ * has ever been stored. */
+export function getStoredWhaleTopTraders(db) {
+  const rows = db.prepare("SELECT * FROM whale_top_traders ORDER BY rank ASC").all();
+  if (!rows.length) return null;
+  return {
+    topTraders: rows.map((r) => ({
+      rank: r.rank,
+      wallet: r.wallet,
+      name: r.name,
+      pnl: r.pnl,
+      volume: r.volume,
+    })),
+    fetchedAt: rows[0].fetched_at,
+  };
+}

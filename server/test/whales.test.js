@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { getDb, replaceWhalePositions, getStoredWhalePositions } from "../src/db.js";
+import {
+  getDb,
+  replaceWhalePositions,
+  getStoredWhalePositions,
+  replaceWhaleTopTraders,
+  getStoredWhaleTopTraders,
+} from "../src/db.js";
 import { fetchWhalePositions } from "../src/whales.js";
 
 const dbPath = path.join(os.tmpdir(), `whales-test-${Date.now()}-${process.pid}.db`);
@@ -84,6 +90,47 @@ test("replaceWhalePositions with zero positions clears the table (getStoredWhale
   assert.equal(getStoredWhalePositions(db), null);
 });
 
+const SAMPLE_TOP_TRADERS = {
+  topTraders: [
+    { rank: 1, wallet: "0xrich", name: "rich_trader", pnl: 50000, volume: 900000 },
+    { rank: 2, wallet: "0xmid", name: null, pnl: 20000, volume: 400000 },
+  ],
+  fetchedAt: "2024-06-01T00:00:00.000Z",
+};
+
+test("getStoredWhaleTopTraders returns null before anything has ever been stored", () => {
+  assert.equal(getStoredWhaleTopTraders(db), null);
+});
+
+test("replaceWhaleTopTraders persists a snapshot that getStoredWhaleTopTraders round-trips, ordered by rank", () => {
+  replaceWhaleTopTraders(db, SAMPLE_TOP_TRADERS);
+  const stored = getStoredWhaleTopTraders(db);
+  assert.equal(stored.topTraders.length, 2);
+  assert.equal(stored.topTraders[0].rank, 1);
+  assert.equal(stored.topTraders[0].name, "rich_trader");
+  assert.equal(stored.topTraders[0].pnl, 50000);
+  assert.equal(stored.topTraders[1].rank, 2);
+  assert.equal(stored.topTraders[1].name, null);
+  assert.equal(stored.fetchedAt, "2024-06-01T00:00:00.000Z");
+});
+
+test("replaceWhaleTopTraders fully replaces the previous snapshot rather than appending", () => {
+  replaceWhaleTopTraders(db, SAMPLE_TOP_TRADERS);
+  replaceWhaleTopTraders(db, {
+    topTraders: [{ rank: 1, wallet: "0xnew", name: "new_trader", pnl: 1, volume: 2 }],
+    fetchedAt: "2024-06-02T00:00:00.000Z",
+  });
+  const stored = getStoredWhaleTopTraders(db);
+  assert.equal(stored.topTraders.length, 1);
+  assert.equal(stored.topTraders[0].name, "new_trader");
+});
+
+test("replaceWhaleTopTraders with zero traders clears the table (getStoredWhaleTopTraders then returns null)", () => {
+  replaceWhaleTopTraders(db, SAMPLE_TOP_TRADERS);
+  replaceWhaleTopTraders(db, { topTraders: [], fetchedAt: "2024-06-03T00:00:00.000Z" });
+  assert.equal(getStoredWhaleTopTraders(db), null);
+});
+
 function stubFetch(handler) {
   global.fetch = async (url) => handler(new URL(url));
 }
@@ -108,10 +155,46 @@ test("fetchWhalePositions persists a fresh rescan to the DB", async () => {
   const result = await fetchWhalePositions(db, { limit: 1, timePeriod: "TESTA" });
   assert.equal(result.positions.length, 1);
   assert.equal(result.positions[0].slug, "fresh-market");
+  assert.equal(result.topTraders.length, 1);
+  assert.equal(result.topTraders[0].name, "fresh_trader");
+  assert.equal(result.topTraders[0].pnl, 10);
+  assert.equal(result.topTraders[0].rank, 1);
 
   const stored = getStoredWhalePositions(db);
   assert.equal(stored.positions.length, 1);
   assert.equal(stored.positions[0].slug, "fresh-market");
+
+  const storedTop = getStoredWhaleTopTraders(db);
+  assert.equal(storedTop.topTraders.length, 1);
+  assert.equal(storedTop.topTraders[0].wallet, "0xfresh");
+});
+
+test("fetchWhalePositions ranks topTraders by pnl (highest first), independent of leaderboard order", async () => {
+  stubFetch((u) => {
+    if (u.pathname === "/v1/leaderboard") {
+      return {
+        status: 200,
+        ok: true,
+        json: async () => [
+          { proxyWallet: "0xa", name: "trader_a", pnl: 5, vol: 100 },
+          { proxyWallet: "0xb", name: "trader_b", pnl: 500, vol: 50 },
+          { proxyWallet: "0xc", name: "trader_c", pnl: 50, vol: 10 },
+        ],
+      };
+    }
+    if (u.pathname === "/positions") return { status: 200, ok: true, json: async () => [] };
+    throw new Error(`unexpected path ${u.pathname}`);
+  });
+
+  const result = await fetchWhalePositions(db, { limit: 3, timePeriod: "TESTB" });
+  assert.deepEqual(
+    result.topTraders.map((t) => t.name),
+    ["trader_b", "trader_c", "trader_a"]
+  );
+  assert.deepEqual(
+    result.topTraders.map((t) => t.rank),
+    [1, 2, 3]
+  );
 });
 
 // The "leaderboard/positions call fails outright" fallback paths in

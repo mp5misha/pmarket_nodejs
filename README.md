@@ -536,9 +536,12 @@ works exactly as before on both backends.
 ## Whales trades
 
 The **Whales trades** tab shows what Polymarket's biggest traders currently
-hold — the current open positions of the top 50 traders on Polymarket's own
+hold — the current open positions of the top traders on Polymarket's own
 public leaderboard, ranked by volume or profit over a chosen window (today/
-this week/this month/all time). This is live data pulled straight from
+this week/this month/all time). A **leaderboard size** dropdown selects how
+many traders count as "whales" — **Top 50** (default), **Top 100**,
+**Top 150**, or **Top 200** — changing it re-fetches immediately, same as
+changing the time window or ranking. This is live data pulled straight from
 Polymarket on each load (with a 2-minute server-side cache — see below);
 it's unrelated to the sidebar's "Run sync", which only ever touches the
 markets catalog, never whale data.
@@ -551,33 +554,29 @@ live position value, and unrealized P&L (colored green/red). A summary line
 above the table reports how many traders and positions were returned, and
 how many wallets (if any) failed to load and were skipped rather than
 failing the whole request. The **Refresh** button re-fetches immediately;
-otherwise it refreshes whenever you change the time window or ranking.
+otherwise it refreshes whenever you change the time window, ranking, or
+leaderboard size.
 
 An **Automatically sync positions with selected conditions** dropdown (same
 options/labels/default-off behavior as the sidebar's own auto-sync
 dropdown: no automatic sync, or every 1s/5s/20s/1m/5m/10m) re-runs this
 tab's refresh on a timer instead of clicking Refresh by hand, using
-whichever time-window/ranking are currently selected. Like the sidebar's
-version, a tick is skipped (not queued) if a previous refresh is still in
-flight, and the setting is local to the tab only — it isn't saved anywhere
-and resets to off on reload.
+whichever time-window/ranking/leaderboard-size are currently selected. Like
+the sidebar's version, a tick is skipped (not queued) if a previous refresh
+is still in flight, and the setting is local to the tab only — it isn't
+saved anywhere and resets to off on reload.
 
-Whale positions also surface on the **All Markets** grid and a market's
-detail panel:
+### Top 10 most profitable traders
 
-- Any market a top-50 trader currently holds a position in gets its grid
-  row tinted **purple**, regardless of any filter — this reflects live
-  data on every grid load, not just when the checkbox below is checked.
-  It's skipped for a row that already has its own trade-price green/red
-  tint (see the previous section) since that's the more specific, personal
-  signal for that row.
-- A **Whales trades** checkbox in the All Markets filter bar limits the
-  grid to just markets currently held by a top-50 trader, applied
-  server-side (`onlyWhaleMarkets` on `GET /api/markets/grouped`) the same
-  way **My trade markets** works.
-- A market's detail panel shows a **Whale positions in this market**
-  section (trader, outcome, size, price, position value, P&L) whenever any
-  top-50 trader holds a position there — omitted entirely otherwise.
+Above the positions table, the **Whales trades** tab shows a bar chart and
+ranked list of the **10 most profitable traders** on the currently-fetched
+leaderboard — ranked by realized P&L (Polymarket's own `pnl` leaderboard
+stat for the selected time window), independent of whether a trader
+currently holds a position that made it into the positions table below (a
+trader can rank in the top 10 by profit with zero open positions right
+now). Each entry shows the trader's name (or a shortened wallet address, the
+same fallback as the positions table) and their realized P&L; the chart bars
+are colored green/red the same way P&L is colored elsewhere in the app.
 
 **Persistence.** Every successful rescan (not one served from the 2-minute
 in-memory cache — an actual fresh fetch from Polymarket) is saved to this
@@ -585,9 +584,34 @@ app's own database, replacing the previous snapshot wholesale, in a
 `whale_positions` table (`server/migrations/010_whale_positions.sql` for
 Express/SQLite; the matching table in `lib/db.js`'s `SCHEMA_SQL` for
 Vercel/Postgres — see `replaceWhalePositions`/`getStoredWhalePositions` in
-either `db.js`). This is durable "last known good" data, not a history —
-each rescan fully replaces the last one, and it survives an Express restart
-or a Vercel cold start, unlike the separate 2-minute in-memory cache.
+either `db.js`) and a parallel `whale_top_traders` table
+(`server/migrations/012_whale_top_traders.sql` /
+`replaceWhaleTopTraders`/`getStoredWhaleTopTraders`) for the top-10 snapshot.
+Both are durable "last known good" data, not a history — each rescan fully
+replaces the last one, and they survive an Express restart or a Vercel cold
+start, unlike the separate 2-minute in-memory cache. If a live rescan fails
+outright, both the positions table and the top-10 chart/list fall back
+together to their last-stored snapshots (tagged `stale: true`), so a
+transient Polymarket outage never blanks out either one.
+
+Whale positions also surface on the **All Markets** grid and a market's
+detail panel:
+
+- Any market a top-listed trader currently holds a position in gets its
+  grid row tinted **purple**, regardless of any filter — this reflects live
+  data on every grid load (always against the default top-50 leaderboard,
+  independent of the Whales trades tab's own leaderboard-size selector),
+  not just when the checkbox below is checked. It's skipped for a row that
+  already has its own trade-price green/red tint (see the previous section)
+  since that's the more specific, personal signal for that row.
+- A **Whales trades** checkbox in the All Markets filter bar limits the
+  grid to just markets currently held by a top-50 trader, applied
+  server-side (`onlyWhaleMarkets` on `GET /api/markets/grouped`) the same
+  way **My trade markets** works.
+- A market's detail panel shows a **Whale positions in this market**
+  section (trader, outcome, **position direction** — a normalized "Yes"/"No"
+  reading of that same outcome, size, price, position value, P&L) whenever
+  any top-50 trader holds a position there — omitted entirely otherwise.
 
 If a rescan fails outright (the leaderboard call errors after retries, or
 every single wallet's positions call fails even though the leaderboard
@@ -610,18 +634,28 @@ Gamma/CLOB APIs the rest of this app uses — has no officially published
 schema, so `fetchLeaderboard`/`fetchUserPositions` (`server/src/
 polymarket.js` / `lib/polymarket.js`) read every field defensively with
 fallback names. `server/src/whales.js` / `lib/whales.js` fan out to each of
-the 50 wallets' positions endpoints concurrently (6 at a time, mirroring the
-sync worker-queue pattern), merge and sort the results by live position
-value, and cache the aggregate for 2 minutes so opening the tab repeatedly
-doesn't re-run ~50 external requests every time. Both backends serve this at
-`/api/meta/whales` (see **Function count** above — it went straight into the
-already-merged `api/meta/[key].js` on Vercel rather than getting its own
-file, since the 12-function budget had no room left). `getWhaleSlugSet`/
-`getWhalePositionsForSlug` (also in whales.js) wrap that same cached
-aggregate for the grid's purple highlight/filter and the detail panel's
-whale-positions section respectively — both degrade to an empty result on
-any failure rather than breaking the markets grid or a market's detail
-view over a whale-data hiccup.
+the selected leaderboard size's wallets' positions endpoints concurrently (6
+at a time, mirroring the sync worker-queue pattern), merge and sort the
+results by live position value, and cache the aggregate (keyed by leaderboard
+size along with time window/ranking, so switching the dropdown always
+triggers its own fetch/cache entry rather than reusing a smaller scan) for 2
+minutes so opening the tab repeatedly doesn't re-run every external request
+every time. The same fetch also computes `topTraders` — the fetched
+leaderboard's traders sorted by `pnl` descending and sliced to the top 10
+(`computeTopTraders`, using the leaderboard response directly, not the
+per-wallet positions calls) — persisted alongside via
+`replaceWhaleTopTraders`. Both backends serve this at `/api/meta/whales`
+(see **Function count** above — it went straight into the already-merged
+`api/meta/[key].js` on Vercel rather than getting its own file, since the
+12-function budget had no room left; the `limit` query param it already
+accepted is what the leaderboard-size dropdown sends, so no new route was
+needed either). `getWhaleSlugSet`/`getWhalePositionsForSlug` (also in
+whales.js, both fixed to the default top-50 leaderboard regardless of the
+Whales trades tab's own selector) wrap that same cached aggregate for the
+grid's purple highlight/filter and the detail panel's whale-positions
+section respectively — both degrade to an empty result on any failure
+rather than breaking the markets grid or a market's detail view over a
+whale-data hiccup.
 
 ## AI analysis (DeepSeek)
 
