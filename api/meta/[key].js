@@ -21,7 +21,7 @@ export default async function handler(req, res) {
     }
     if (req.query.key === "whales") {
       const { limit, timePeriod, orderBy } = req.query;
-      const result = await fetchWhalePositions({
+      const result = await fetchWhalePositions(pool, {
         limit: limit ? Number(limit) : 50,
         timePeriod: timePeriod || undefined,
         orderBy: orderBy || undefined,

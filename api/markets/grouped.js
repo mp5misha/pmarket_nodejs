@@ -14,7 +14,7 @@ export default async function handler(req, res) {
     // See server/src/index.js's matching route for why this is fetched
     // unconditionally (powers the grid's purple highlight on every load,
     // not just when the "Whales trades" filter checkbox is on).
-    const whaleSlugs = await getWhaleSlugSet();
+    const whaleSlugs = await getWhaleSlugSet(pool);
     const result = await queryMarketsGrouped(pool, {
       search,
       status,

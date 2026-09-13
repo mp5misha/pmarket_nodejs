@@ -518,9 +518,9 @@ The **Whales trades** tab shows what Polymarket's biggest traders currently
 hold — the current open positions of the top 50 traders on Polymarket's own
 public leaderboard, ranked by volume or profit over a chosen window (today/
 this week/this month/all time). This is live data pulled straight from
-Polymarket on each load (with a 2-minute server-side cache — see below), not
-anything synced into this app's own database, so it has nothing to do with
-the sidebar's "Run sync" or the markets grid.
+Polymarket on each load (with a 2-minute server-side cache — see below);
+it's unrelated to the sidebar's "Run sync", which only ever touches the
+markets catalog, never whale data.
 
 Each row is one whale's one position: trader (their leaderboard display name
 if they have one, otherwise a shortened wallet address, with their total
@@ -557,6 +557,31 @@ detail panel:
 - A market's detail panel shows a **Whale positions in this market**
   section (trader, outcome, size, price, position value, P&L) whenever any
   top-50 trader holds a position there — omitted entirely otherwise.
+
+**Persistence.** Every successful rescan (not one served from the 2-minute
+in-memory cache — an actual fresh fetch from Polymarket) is saved to this
+app's own database, replacing the previous snapshot wholesale, in a
+`whale_positions` table (`server/migrations/010_whale_positions.sql` for
+Express/SQLite; the matching table in `lib/db.js`'s `SCHEMA_SQL` for
+Vercel/Postgres — see `replaceWhalePositions`/`getStoredWhalePositions` in
+either `db.js`). This is durable "last known good" data, not a history —
+each rescan fully replaces the last one, and it survives an Express restart
+or a Vercel cold start, unlike the separate 2-minute in-memory cache.
+
+If a rescan fails outright (the leaderboard call errors after retries, or
+every single wallet's positions call fails even though the leaderboard
+itself responded), `fetchWhalePositions` falls back to that stored snapshot
+instead of throwing or returning nothing, tagging the result `stale: true`
+— the **Whales trades** tab shows a "Live rescan failed — showing the last
+successfully stored snapshot" note in that case, and the grid highlight/
+detail section built on the same function inherit last-known data rather
+than going blank. A stale fallback is itself cached for a shorter 20
+seconds (vs. a healthy result's 2 minutes) so a real outage doesn't force
+every page load to eat the leaderboard call's full retry-with-backoff delay
+— it still checks back reasonably soon once Polymarket recovers. A partial
+failure (some wallets succeed, some don't) is unaffected by any of this —
+it's saved normally, same as always, just with a `failedWalletCount` above
+zero.
 
 Implementation notes: Polymarket's leaderboard and per-wallet positions come
 from its public "Data API" (`data-api.polymarket.com`), which — unlike the

@@ -54,8 +54,12 @@ function eventUrl(base, position) {
 
 /** Positions currently held by Polymarket's top-50 leaderboard traders
  * ("whales"), aggregated server-side from the public leaderboard + each
- * wallet's open positions (see server/src/whales.js / lib/whales.js) — a
- * live external read with no local persistence, unlike My Trades. */
+ * wallet's open positions (see server/src/whales.js / lib/whales.js). Each
+ * successful rescan is persisted to this app's own database as a durable
+ * "last known good" snapshot (unlike My Trades' user-entered records, this
+ * is a cache of external data, not something you edit here), so a rescan
+ * that fails outright still has something to show — see the `stale` flag
+ * below. */
 export default function WhaleTrades() {
   const [timePeriod, setTimePeriod] = useState("DAY");
   const [orderBy, setOrderBy] = useState("VOL");
@@ -107,7 +111,9 @@ export default function WhaleTrades() {
       <p className="discovery-note">
         Live open positions held by the top 50 traders on Polymarket's public leaderboard, ranked by{" "}
         {orderBy === "PNL" ? "profit" : "volume"} for the selected window — refreshed from Polymarket
-        directly (not stored in this app's own database).
+        directly (unrelated to the sidebar's "Run sync"). Each successful rescan is saved to this
+        app's own database, so a temporary Polymarket outage falls back to the last known snapshot
+        instead of showing nothing.
       </p>
 
       <div className="filters">
@@ -148,6 +154,11 @@ export default function WhaleTrades() {
             <span>{data.failedWalletCount} trader(s) skipped (unavailable)</span>
           )}
           <span>Fetched {new Date(data.fetchedAt).toLocaleTimeString()}</span>
+          {data.stale && (
+            <span className="sync-error">
+              Live rescan failed — showing the last successfully stored snapshot
+            </span>
+          )}
         </p>
       )}
 

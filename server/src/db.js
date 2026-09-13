@@ -1033,3 +1033,82 @@ export function getProfitabilityAnalytics(db, userId) {
     calibration,
   };
 }
+
+// Whale positions (top-50 leaderboard traders' current holdings, see
+// server/src/whales.js) — persisted so the last successful rescan survives
+// a server restart instead of living only in whales.js's in-memory cache,
+// and so a rescan that fails outright has something to fall back to.
+const WHALE_POSITIONS_INSERT_SQL = `
+  INSERT INTO whale_positions (
+    condition_id, slug, event_slug, title, outcome, size, avg_price, cur_price,
+    current_value, cash_pnl, percent_pnl, trader_wallet, trader_name, trader_pnl, trader_volume,
+    scan_trader_count, scan_failed_wallet_count, fetched_at
+  ) VALUES (
+    @conditionId, @slug, @eventSlug, @title, @outcome, @size, @avgPrice, @curPrice,
+    @currentValue, @cashPnl, @percentPnl, @traderWallet, @traderName, @traderPnl, @traderVolume,
+    @scanTraderCount, @scanFailedWalletCount, @fetchedAt
+  )
+`;
+
+/** Replaces the entire stored whale-positions snapshot with the result of a
+ * fresh rescan — a snapshot, not a history, so the old one is fully
+ * discarded rather than accumulated. */
+export function replaceWhalePositions(db, { positions, traderCount, failedWalletCount, fetchedAt }) {
+  const insert = db.prepare(WHALE_POSITIONS_INSERT_SQL);
+  const replace = db.transaction((rows) => {
+    db.prepare("DELETE FROM whale_positions").run();
+    for (const p of rows) {
+      insert.run({
+        conditionId: p.conditionId ?? null,
+        slug: p.slug ?? null,
+        eventSlug: p.eventSlug ?? null,
+        title: p.title ?? null,
+        outcome: p.outcome ?? null,
+        size: p.size ?? null,
+        avgPrice: p.avgPrice ?? null,
+        curPrice: p.curPrice ?? null,
+        currentValue: p.currentValue ?? null,
+        cashPnl: p.cashPnl ?? null,
+        percentPnl: p.percentPnl ?? null,
+        traderWallet: p.traderWallet ?? null,
+        traderName: p.traderName ?? null,
+        traderPnl: p.traderPnl ?? null,
+        traderVolume: p.traderVolume ?? null,
+        scanTraderCount: traderCount,
+        scanFailedWalletCount: failedWalletCount,
+        fetchedAt,
+      });
+    }
+  });
+  replace(positions);
+}
+
+/** The last successfully-persisted whale-positions snapshot, or null if
+ * none has ever been stored (a fresh install, or every rescan so far has
+ * failed before reaching the point of storing anything). */
+export function getStoredWhalePositions(db) {
+  const rows = db.prepare("SELECT * FROM whale_positions ORDER BY current_value DESC NULLS LAST").all();
+  if (!rows.length) return null;
+  return {
+    positions: rows.map((r) => ({
+      conditionId: r.condition_id,
+      slug: r.slug,
+      eventSlug: r.event_slug,
+      title: r.title,
+      outcome: r.outcome,
+      size: r.size,
+      avgPrice: r.avg_price,
+      curPrice: r.cur_price,
+      currentValue: r.current_value,
+      cashPnl: r.cash_pnl,
+      percentPnl: r.percent_pnl,
+      traderWallet: r.trader_wallet,
+      traderName: r.trader_name,
+      traderPnl: r.trader_pnl,
+      traderVolume: r.trader_volume,
+    })),
+    traderCount: rows[0].scan_trader_count,
+    failedWalletCount: rows[0].scan_failed_wallet_count,
+    fetchedAt: rows[0].fetched_at,
+  };
+}

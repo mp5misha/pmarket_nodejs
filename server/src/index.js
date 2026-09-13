@@ -444,7 +444,7 @@ app.get("/api/meta/:key", async (req, res) => {
   if (req.params.key === "whales") {
     try {
       const { limit, timePeriod, orderBy } = req.query;
-      const result = await fetchWhalePositions({
+      const result = await fetchWhalePositions(db, {
         limit: limit ? Number(limit) : 50,
         timePeriod: timePeriod || undefined,
         orderBy: orderBy || undefined,
@@ -496,11 +496,12 @@ app.get("/api/markets", (req, res) => {
 app.get("/api/markets/grouped", async (req, res) => {
   const { search, status, sortBy, minVolume, minPrice, maxPrice, tag, myTrades, onlyWhaleMarkets, page, pageSize } =
     req.query;
+  const db = getDb(DEFAULT_DB_PATH);
   // Fetched (and, on the common path, served from whales.js's own 2-minute
   // cache) on every grid load so the purple "whale-relevant" highlight
   // always reflects current data, not just when the checkbox filter is on.
-  const whaleSlugs = await getWhaleSlugSet();
-  const result = queryMarketsGrouped(getDb(DEFAULT_DB_PATH), {
+  const whaleSlugs = await getWhaleSlugSet(db);
+  const result = queryMarketsGrouped(db, {
     search,
     status,
     sortBy,
@@ -523,11 +524,12 @@ app.get("/api/tags", (req, res) => {
 });
 
 app.get("/api/markets/:slug", async (req, res) => {
-  const row = getMarket(getDb(DEFAULT_DB_PATH), req.params.slug);
+  const db = getDb(DEFAULT_DB_PATH);
+  const row = getMarket(db, req.params.slug);
   if (!row) return res.status(404).json({ error: "Market not found" });
   // Whale positions specifically in this market, for the detail panel's
   // "Whale positions in this market" section — see whales.js.
-  row.whalePositions = await getWhalePositionsForSlug(req.params.slug);
+  row.whalePositions = await getWhalePositionsForSlug(db, req.params.slug);
   res.json(row);
 });
 
