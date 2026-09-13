@@ -77,7 +77,6 @@ import { fetchPriceHistory } from "./polymarket.js";
 import { runSyncStep, refreshMarketPrices, runFullSync } from "./sync.js";
 import { fetchWhalePositions, getWhaleSlugSet, getWhalePositionsForSlug } from "./whales.js";
 import {
-  analyzeMarket,
   askFollowUp,
   buildAnalysisPrompt,
   DEFAULT_PROMPT_TEMPLATE,
@@ -86,6 +85,10 @@ import {
   DEFAULT_MODEL,
   DEFAULT_REASONING_EFFORT,
   estimateCost,
+  extractFairProbability,
+  buildWhaleAnalysisPrompt,
+  DEFAULT_WHALE_PROMPT_TEMPLATE,
+  callChatCompletions,
 } from "./deepseek.js";
 import { hashPassword, verifyPassword, generateToken, hashToken, generate2faCode } from "./auth.js";
 import { sendMail } from "./mailer.js";
@@ -108,6 +111,7 @@ const MAX_2FA_ATTEMPTS = 5;
 
 const DEEPSEEK_KEY_SETTING = "deepseek_api_key";
 const DEEPSEEK_PROMPT_SETTING = "deepseek_prompt_template";
+const DEEPSEEK_WHALE_PROMPT_SETTING = "deepseek_whale_prompt_template";
 const DEEPSEEK_MODEL_SETTING = "deepseek_model";
 const DEEPSEEK_EFFORT_SETTING = "deepseek_reasoning_effort";
 const DEFAULT_TEMPLATE_ID_SETTING = "default_prompt_template_id";
@@ -388,6 +392,14 @@ function deepseekPromptStatus(db, userId) {
   return { template: stored || DEFAULT_PROMPT_TEMPLATE, isDefault: !stored };
 }
 
+// Configurable prompt for the "AI analysis of Whales activity" button — a
+// single per-user setting (unlike the market-analysis prompt, this has no
+// Phase 4 named-templates system; one configurable prompt is enough here).
+function deepseekWhalePromptStatus(db, userId) {
+  const stored = getSetting(db, userId, DEEPSEEK_WHALE_PROMPT_SETTING);
+  return { template: stored || DEFAULT_WHALE_PROMPT_TEMPLATE, isDefault: !stored };
+}
+
 /** Currently selected DeepSeek model + reasoning effort (Phase 3), along
  * with the choices available so the settings UI doesn't hardcode them. */
 function deepseekModelStatus(db, userId) {
@@ -586,22 +598,51 @@ app.post("/api/markets/:slug/analyze", requireAuth, async (req, res) => {
   const db = getDb(DEFAULT_DB_PATH);
   const row = getMarket(db, req.params.slug);
   if (!row) return res.status(404).json({ error: "Market not found" });
-  const { force = false, templateId } = req.body || {};
+  const { force = false, templateId, kind = "market" } = req.body || {};
+  if (kind !== "market" && kind !== "whales") {
+    return res.status(400).json({ error: "kind must be 'market' or 'whales'" });
+  }
   try {
     const apiKey = getSetting(db, req.userId, DEEPSEEK_KEY_SETTING);
-    const template = resolvePromptTemplate(db, req.userId, templateId);
-    const promptTemplateText = template?.template || DEFAULT_PROMPT_TEMPLATE;
     const { model, reasoningEffort } = deepseekModelStatus(db, req.userId);
-    const promptText = buildAnalysisPrompt(row, promptTemplateText);
-    const inputHash = computeInputHash({ marketSlug: row.slug, promptText, modelName: model, reasoningEffort });
+
+    // "AI analysis of Whales activity" (kind: "whales") is a parallel
+    // analysis stream on the same market — its own prompt (built from
+    // whale positions, not market data), its own single configurable
+    // prompt setting (no Phase 4 named-templates system for it), and its
+    // own cache/history via the kind column, but otherwise reuses every
+    // piece of market-analysis plumbing below (caching, storage, cost
+    // estimate) unchanged.
+    let template = null;
+    let promptTemplateText;
+    let promptText;
+    if (kind === "whales") {
+      const whalePositions = await getWhalePositionsForSlug(db, row.slug);
+      if (whalePositions.length === 0) {
+        return res.status(400).json({ error: "This market has no whale positions to analyze" });
+      }
+      promptTemplateText = getSetting(db, req.userId, DEEPSEEK_WHALE_PROMPT_SETTING) || DEFAULT_WHALE_PROMPT_TEMPLATE;
+      promptText = buildWhaleAnalysisPrompt(row, whalePositions, promptTemplateText);
+    } else {
+      template = resolvePromptTemplate(db, req.userId, templateId);
+      promptTemplateText = template?.template || DEFAULT_PROMPT_TEMPLATE;
+      promptText = buildAnalysisPrompt(row, promptTemplateText);
+    }
+
+    const inputHash = computeInputHash({ marketSlug: row.slug, promptText, modelName: model, reasoningEffort, kind });
 
     if (!force) {
-      const cached = findCachedAnalysis(db, req.userId, inputHash);
+      const cached = findCachedAnalysis(db, req.userId, inputHash, kind);
       if (cached) return res.status(200).json({ analysis: cached, cached: true });
     }
 
-    const result = await analyzeMarket(row, { apiKey, promptTemplate: promptTemplateText, model, reasoningEffort });
+    const result = await callChatCompletions([{ role: "user", content: promptText }], {
+      apiKey,
+      model,
+      reasoningEffort,
+    });
     const costEstimate = estimateCost(model, result.promptTokens, result.completionTokens);
+    const fairProbYes = kind === "market" ? extractFairProbability(result.content) : null;
     const saved = createAnalysis(db, req.userId, {
       marketSlug: row.slug,
       promptTemplateId: template?.id ?? null,
@@ -615,6 +656,8 @@ app.post("/api/markets/:slug/analyze", requireAuth, async (req, res) => {
       tokensUsed: result.tokensUsed,
       costEstimate,
       status: "completed",
+      kind,
+      fairProbYes,
     });
     res.status(200).json({ analysis: saved, cached: false });
   } catch (err) {
@@ -650,6 +693,7 @@ app.post("/api/analyses/:id/follow-up", requireAuth, async (req, res) => {
       promptText: followUpText,
       modelName: model,
       reasoningEffort,
+      kind: parent.kind,
     });
     const saved = createAnalysis(db, req.userId, {
       marketSlug: parent.market_slug,
@@ -665,6 +709,10 @@ app.post("/api/analyses/:id/follow-up", requireAuth, async (req, res) => {
       costEstimate,
       status: "completed",
       parentAnalysisId: parent.id,
+      // Inherit the parent's kind ('market' or 'whales') — a follow-up on a
+      // whale-activity analysis must stay in that same history/cache
+      // stream, not silently default back to 'market'.
+      kind: parent.kind,
     });
     res.status(200).json({ analysis: saved });
   } catch (err) {
@@ -673,7 +721,8 @@ app.post("/api/analyses/:id/follow-up", requireAuth, async (req, res) => {
 });
 
 app.get("/api/markets/:slug/analyses", requireAuth, (req, res) => {
-  res.json(listAnalysesForMarket(getDb(DEFAULT_DB_PATH), req.userId, req.params.slug));
+  const kind = req.query.kind === "whales" ? "whales" : "market";
+  res.json(listAnalysesForMarket(getDb(DEFAULT_DB_PATH), req.userId, req.params.slug, kind));
 });
 
 app.get("/api/analyses/:id", requireAuth, (req, res) => {
@@ -1040,6 +1089,26 @@ app.delete("/api/settings/deepseek-prompt", requireAuth, (req, res) => {
   const db = getDb(DEFAULT_DB_PATH);
   deleteSetting(db, req.userId, DEEPSEEK_PROMPT_SETTING);
   res.status(200).json(deepseekPromptStatus(db, req.userId));
+});
+
+app.get("/api/settings/deepseek-whale-prompt", requireAuth, (req, res) => {
+  res.json(deepseekWhalePromptStatus(getDb(DEFAULT_DB_PATH), req.userId));
+});
+
+app.post("/api/settings/deepseek-whale-prompt", requireAuth, (req, res) => {
+  const { template } = req.body || {};
+  if (typeof template !== "string" || !template.trim()) {
+    return res.status(400).json({ error: "template is required" });
+  }
+  const db = getDb(DEFAULT_DB_PATH);
+  setSetting(db, req.userId, DEEPSEEK_WHALE_PROMPT_SETTING, template);
+  res.status(200).json(deepseekWhalePromptStatus(db, req.userId));
+});
+
+app.delete("/api/settings/deepseek-whale-prompt", requireAuth, (req, res) => {
+  const db = getDb(DEFAULT_DB_PATH);
+  deleteSetting(db, req.userId, DEEPSEEK_WHALE_PROMPT_SETTING);
+  res.status(200).json(deepseekWhalePromptStatus(db, req.userId));
 });
 
 app.get("/api/settings/deepseek-model", requireAuth, (req, res) => {

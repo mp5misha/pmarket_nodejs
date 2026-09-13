@@ -1,6 +1,6 @@
 import { getPool, ensureSchema, getSetting, setSetting, deleteSetting } from "../../lib/db.js";
-import { DEEPSEEK_KEY_SETTING, DEEPSEEK_PROMPT_SETTING } from "../../lib/settings.js";
-import { DEFAULT_PROMPT_TEMPLATE } from "../../lib/deepseek.js";
+import { DEEPSEEK_KEY_SETTING, DEEPSEEK_PROMPT_SETTING, DEEPSEEK_WHALE_PROMPT_SETTING } from "../../lib/settings.js";
+import { DEFAULT_PROMPT_TEMPLATE, DEFAULT_WHALE_PROMPT_TEMPLATE } from "../../lib/deepseek.js";
 
 // A single dynamic-route function serving both /api/settings/deepseek-key
 // and /api/settings/deepseek-prompt (previously two separate files) — the
@@ -19,6 +19,11 @@ async function keyStatus(pool) {
 async function promptStatus(pool) {
   const stored = await getSetting(pool, DEEPSEEK_PROMPT_SETTING);
   return { template: stored || DEFAULT_PROMPT_TEMPLATE, isDefault: !stored };
+}
+
+async function whalePromptStatus(pool) {
+  const stored = await getSetting(pool, DEEPSEEK_WHALE_PROMPT_SETTING);
+  return { template: stored || DEFAULT_WHALE_PROMPT_TEMPLATE, isDefault: !stored };
 }
 
 async function handleKey(req, res, pool) {
@@ -61,6 +66,26 @@ async function handlePrompt(req, res, pool) {
   return res.status(405).json({ error: "Method not allowed" });
 }
 
+async function handleWhalePrompt(req, res, pool) {
+  if (req.method === "GET") {
+    return res.status(200).json(await whalePromptStatus(pool));
+  }
+  if (req.method === "POST") {
+    const { template } = req.body || {};
+    if (typeof template !== "string" || !template.trim()) {
+      return res.status(400).json({ error: "template is required" });
+    }
+    await setSetting(pool, DEEPSEEK_WHALE_PROMPT_SETTING, template);
+    return res.status(200).json(await whalePromptStatus(pool));
+  }
+  if (req.method === "DELETE") {
+    await deleteSetting(pool, DEEPSEEK_WHALE_PROMPT_SETTING);
+    return res.status(200).json(await whalePromptStatus(pool));
+  }
+  res.setHeader("Allow", "GET, POST, DELETE");
+  return res.status(405).json({ error: "Method not allowed" });
+}
+
 export default async function handler(req, res) {
   try {
     const pool = getPool();
@@ -68,6 +93,7 @@ export default async function handler(req, res) {
 
     if (req.query.key === "deepseek-key") return await handleKey(req, res, pool);
     if (req.query.key === "deepseek-prompt") return await handlePrompt(req, res, pool);
+    if (req.query.key === "deepseek-whale-prompt") return await handleWhalePrompt(req, res, pool);
 
     return res.status(404).json({ error: "Not found" });
   } catch (err) {

@@ -190,6 +190,8 @@ function MarketRow({ market, isNested, selectedSlug, onSelectMarket, selectedSlu
       >
         {fmtAnalysisPreview(market.last_analysis_text) || "—"}
       </td>
+      <td className="num">{fmtPct(market.fair_prob_yes)}</td>
+      <td className="num">{market.fair_prob_yes != null ? fmtPct(1 - Number(market.fair_prob_yes)) : "—"}</td>
       <td className="updated-cell">
         {market.closed ? <span className="resolved-badge">Resolved</span> : fmtDateTime(market.last_updated)}
       </td>
@@ -340,6 +342,8 @@ export default function MarketGrid({
                 <th className="num">Liquidity</th>
                 <th>Resolves</th>
                 <th>AI analysis results</th>
+                <th className="num">AI fair YES %</th>
+                <th className="num">AI fair NO %</th>
                 <th>Updated</th>
                 <th>My trade price</th>
                 <th>My trade date</th>

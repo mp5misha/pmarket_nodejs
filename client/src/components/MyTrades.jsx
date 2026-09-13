@@ -28,6 +28,47 @@ function fmtMoney(v, currency = "USD") {
   })}`;
 }
 
+// Same as fmtMoney but puts a "-" before the currency symbol for a loss
+// instead of after it (fmtMoney's "$-20.00" reads worse than "-$20.00") —
+// used for the new live P&L column/chart below, where negative values are
+// the common case for an underwater open position.
+function fmtSignedMoney(v, currency = "USD") {
+  if (v === null || v === undefined) return "—";
+  const n = Number(v);
+  const sign = n < 0 ? "-" : "";
+  const symbol = currency === "USD" ? "$" : `${currency} `;
+  return `${sign}${symbol}${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+}
+
+// The market's live price for whichever side a trade was placed on — trades
+// are joined with their market's current_price/no_price server-side (see
+// server/src/db.js's listTrades) as market_current_price/market_no_price.
+function priceForSide(trade) {
+  const side = (trade.side || "").toLowerCase();
+  const p = side === "no" ? trade.market_no_price : trade.market_current_price;
+  return p == null ? null : Number(p);
+}
+
+// For an open trade, marks the position to the market's current price
+// (shares bought = stake / entry price, same formula the server uses for a
+// won trade's payout); for a resolved trade, the stake is already
+// converted into whatever it actually paid out. Mirrors MarketGrid.jsx's
+// tradeProfit/priceForSide for the All Markets grid's "My trade profit".
+function positionValue(trade) {
+  if (trade.status !== "open") return trade.payout;
+  const entryPrice = Number(trade.entry_price);
+  const currentPrice = priceForSide(trade);
+  if (!entryPrice || currentPrice == null) return null;
+  const shares = Number(trade.stake) / entryPrice;
+  return shares * currentPrice;
+}
+
+function livePnl(trade) {
+  if (trade.status !== "open") return trade.profit;
+  const value = positionValue(trade);
+  return value == null ? null : value - Number(trade.stake);
+}
+
 // Phase 5: manually-recorded trades, resolved automatically by the server's
 // in-process checker once their market closes. Phase 7 adds the bankroll
 // dashboard and ledger above the trades table — both draw on the same
@@ -379,13 +420,33 @@ export default function MyTrades() {
           No trades recorded yet. Use <strong>Mark as traded</strong> on a market's detail panel.
         </div>
       ) : (
-        <table className="discovery-table">
+        <>
+          <div className="chart-block">
+            <p className="chart-title">P&amp;L by trade{status ? ` (${STATUS_TABS.find((s) => s.value === status)?.label.toLowerCase()})` : ""}</p>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={trades.map((t) => ({ id: t.id, label: t.market_slug, pnl: livePnl(t) }))}>
+                <CartesianGrid stroke="var(--rule)" strokeDasharray="2 4" />
+                <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={0} angle={-30} textAnchor="end" height={60} hide={trades.length > 20} />
+                <YAxis tick={{ fontSize: 11 }} width={50} />
+                <Tooltip formatter={(v) => (v == null ? ["—", "P&L"] : [`$${Number(v).toFixed(2)}`, "P&L"])} />
+                <Bar dataKey="pnl">
+                  {trades.map((t) => (
+                    <Cell key={t.id} fill={(livePnl(t) ?? 0) >= 0 ? "var(--up)" : "var(--down)"} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          <table className="discovery-table">
           <thead>
             <tr>
               <th>Market</th>
               <th>Side</th>
               <th>Entry price</th>
+              <th>Current price</th>
               <th>Stake</th>
+              <th>Position value</th>
+              <th>P&amp;L</th>
               <th>Status</th>
               <th>Payout</th>
               <th>Profit</th>
@@ -395,30 +456,41 @@ export default function MyTrades() {
             </tr>
           </thead>
           <tbody>
-            {trades.map((t) => (
-              <tr key={t.id}>
-                <td>{t.market_slug}</td>
-                <td>{t.side.toUpperCase()}</td>
-                <td>{Number(t.entry_price).toFixed(3)}</td>
-                <td>{fmtMoney(t.stake, currency)}</td>
-                <td>{t.status}</td>
-                <td>{fmtMoney(t.payout, currency)}</td>
-                <td className={t.profit > 0 ? "trades-profit-positive" : t.profit < 0 ? "trades-profit-negative" : ""}>
-                  {t.profit != null ? fmtMoney(t.profit, currency) : "—"}
-                </td>
-                <td>{new Date(t.placed_at).toLocaleString()}</td>
-                <td className="discovery-filters-cell" title={t.note || ""}>
-                  {t.note || "—"}
-                </td>
-                <td>
-                  <button className="btn btn-small btn-ghost" onClick={() => removeTrade(t.id)}>
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {trades.map((t) => {
+              const currentPrice = priceForSide(t);
+              const posValue = positionValue(t);
+              const pnl = livePnl(t);
+              return (
+                <tr key={t.id}>
+                  <td>{t.market_slug}</td>
+                  <td>{t.side.toUpperCase()}</td>
+                  <td>{Number(t.entry_price).toFixed(3)}</td>
+                  <td>{currentPrice != null ? currentPrice.toFixed(3) : "—"}</td>
+                  <td>{fmtMoney(t.stake, currency)}</td>
+                  <td>{posValue != null ? fmtMoney(posValue, currency) : "—"}</td>
+                  <td className={pnl > 0 ? "trades-profit-positive" : pnl < 0 ? "trades-profit-negative" : ""}>
+                    {pnl != null ? fmtSignedMoney(pnl, currency) : "—"}
+                  </td>
+                  <td>{t.status}</td>
+                  <td>{fmtMoney(t.payout, currency)}</td>
+                  <td className={t.profit > 0 ? "trades-profit-positive" : t.profit < 0 ? "trades-profit-negative" : ""}>
+                    {t.profit != null ? fmtMoney(t.profit, currency) : "—"}
+                  </td>
+                  <td>{new Date(t.placed_at).toLocaleString()}</td>
+                  <td className="discovery-filters-cell" title={t.note || ""}>
+                    {t.note || "—"}
+                  </td>
+                  <td>
+                    <button className="btn btn-small btn-ghost" onClick={() => removeTrade(t.id)}>
+                      Delete
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
-        </table>
+          </table>
+        </>
       )}
     </div>
   );

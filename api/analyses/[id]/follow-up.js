@@ -41,6 +41,9 @@ export default async function handler(req, res) {
       resultText: result.content,
       modelName: DEEPSEEK_MODEL,
       tokensUsed: result.tokensUsed,
+      // Inherit the parent's kind ('market' or 'whales') — see
+      // server/src/index.js's matching route for why.
+      kind: parent.kind,
     });
     res.status(200).json({ analysis });
   } catch (err) {

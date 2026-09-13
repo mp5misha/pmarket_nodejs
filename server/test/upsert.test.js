@@ -14,6 +14,10 @@ import {
   createUser,
   createTrade,
   resolveTrade,
+  computeInputHash,
+  findCachedAnalysis,
+  listAnalysesForMarket,
+  listTrades,
 } from "../src/db.js";
 
 const dbPath = path.join(os.tmpdir(), `upsert-test-${Date.now()}-${process.pid}.db`);
@@ -294,4 +298,151 @@ test("queryMarketsGrouped without whaleSlugs leaves is_whale_market unset (backw
   const rows = queryMarketsGrouped(db, {}).groups.flatMap((g) => g.markets);
   const row = rows.find((m) => m.slug === "no-whale-param-market");
   assert.equal(row.is_whale_market, undefined);
+});
+
+test("createAnalysis/findCachedAnalysis/listAnalysesForMarket keep 'market' and 'whales' kinds in separate streams", () => {
+  const owner = createUser(db, { email: "analysis-kind-owner@example.com", passwordHash: "x" });
+  upsertMarket(db, { slug: "kind-test-market", question: "K1", currentPrice: 0.5, noPrice: 0.5, active: true, closed: false });
+
+  const marketHash = computeInputHash({ marketSlug: "kind-test-market", promptText: "same text", modelName: "m", kind: "market" });
+  const whaleHash = computeInputHash({ marketSlug: "kind-test-market", promptText: "same text", modelName: "m", kind: "whales" });
+  assert.notEqual(marketHash, whaleHash, "the kind must be part of the cache key, even with identical prompt text");
+
+  createAnalysis(db, owner.id, {
+    marketSlug: "kind-test-market",
+    promptText: "same text",
+    inputHash: marketHash,
+    modelName: "m",
+    resultText: "market-kind result",
+    kind: "market",
+  });
+  createAnalysis(db, owner.id, {
+    marketSlug: "kind-test-market",
+    promptText: "same text",
+    inputHash: whaleHash,
+    modelName: "m",
+    resultText: "whales-kind result",
+    kind: "whales",
+  });
+
+  const marketList = listAnalysesForMarket(db, owner.id, "kind-test-market", "market");
+  const whaleList = listAnalysesForMarket(db, owner.id, "kind-test-market", "whales");
+  assert.equal(marketList.length, 1);
+  assert.equal(marketList[0].result_text, "market-kind result");
+  assert.equal(whaleList.length, 1);
+  assert.equal(whaleList[0].result_text, "whales-kind result");
+
+  // A cache lookup for one kind must never be satisfied by the other kind's
+  // row, even though they'd otherwise share every other input.
+  assert.equal(findCachedAnalysis(db, owner.id, marketHash, "market").result_text, "market-kind result");
+  assert.equal(findCachedAnalysis(db, owner.id, whaleHash, "whales").result_text, "whales-kind result");
+  assert.equal(findCachedAnalysis(db, owner.id, marketHash, "whales"), undefined);
+});
+
+test("listAnalysesForMarket defaults to kind='market', matching createAnalysis's default", () => {
+  const owner = createUser(db, { email: "analysis-kind-default@example.com", passwordHash: "x" });
+  upsertMarket(db, { slug: "kind-default-market", question: "K2", currentPrice: 0.5, noPrice: 0.5, active: true, closed: false });
+  createAnalysis(db, owner.id, {
+    marketSlug: "kind-default-market",
+    promptText: "p",
+    inputHash: "kd1",
+    modelName: "m",
+    resultText: "default-kind result",
+  });
+  const rows = listAnalysesForMarket(db, owner.id, "kind-default-market");
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].kind, "market");
+});
+
+test("queryMarketsGrouped surfaces the latest market-kind analysis's fair_prob_yes, ignoring whale-kind rows", () => {
+  const owner = createUser(db, { email: "fair-prob-owner@example.com", passwordHash: "x" });
+  upsertMarket(db, { slug: "fair-prob-market", question: "F1", currentPrice: 0.5, noPrice: 0.5, active: true, closed: false });
+
+  createAnalysis(db, owner.id, {
+    marketSlug: "fair-prob-market",
+    promptText: "p1",
+    inputHash: "fp1",
+    modelName: "m",
+    resultText: "r1",
+    kind: "market",
+    fairProbYes: 0.42,
+  });
+  // A whale-kind analysis (even with a later timestamp implicitly, since
+  // it's inserted after) must never leak into the market-kind fair-prob column.
+  createAnalysis(db, owner.id, {
+    marketSlug: "fair-prob-market",
+    promptText: "p2",
+    inputHash: "fp2",
+    modelName: "m",
+    resultText: "r2",
+    kind: "whales",
+    fairProbYes: 0.99,
+  });
+
+  const rows = queryMarketsGrouped(db, { userId: owner.id }).groups.flatMap((g) => g.markets);
+  const row = rows.find((m) => m.slug === "fair-prob-market");
+  assert.equal(row.fair_prob_yes, 0.42);
+});
+
+test("queryMarketsGrouped's fair_prob_yes survives a follow-up that didn't restate one", () => {
+  const owner = createUser(db, { email: "fair-prob-followup@example.com", passwordHash: "x" });
+  upsertMarket(db, { slug: "fair-prob-followup-market", question: "F2", currentPrice: 0.5, noPrice: 0.5, active: true, closed: false });
+
+  const original = createAnalysis(db, owner.id, {
+    marketSlug: "fair-prob-followup-market",
+    promptText: "p1",
+    inputHash: "fpf1",
+    modelName: "m",
+    resultText: "original, with a fair prob",
+    kind: "market",
+    fairProbYes: 0.7,
+  });
+  // A follow-up row — fairProbYes omitted, as the real route does (see
+  // server/src/index.js's follow-up route), and it's the newest row.
+  createAnalysis(db, owner.id, {
+    marketSlug: "fair-prob-followup-market",
+    promptText: "a follow-up question",
+    inputHash: "fpf2",
+    modelName: "m",
+    resultText: "follow-up reply, no fair prob restated",
+    kind: "market",
+    parentAnalysisId: original.id,
+  });
+
+  const rows = queryMarketsGrouped(db, { userId: owner.id }).groups.flatMap((g) => g.markets);
+  const row = rows.find((m) => m.slug === "fair-prob-followup-market");
+  // last_analysis_text reflects the newest row (the follow-up)...
+  assert.equal(row.last_analysis_text, "follow-up reply, no fair prob restated");
+  // ...but fair_prob_yes still reflects the last row that actually had one.
+  assert.equal(row.fair_prob_yes, 0.7);
+});
+
+test("listTrades includes the market's live current/no price via a LEFT JOIN, surviving a deleted market", () => {
+  const owner = createUser(db, { email: "listtrades-price-owner@example.com", passwordHash: "x" });
+  upsertMarket(db, { slug: "listtrades-price-market", question: "L1", currentPrice: 0.65, noPrice: 0.35, active: true, closed: false });
+  createTrade(db, owner.id, {
+    marketSlug: "listtrades-price-market",
+    side: "yes",
+    entryPrice: 0.5,
+    stake: 10,
+    placedAt: "2024-01-01T00:00:00.000Z",
+  });
+  createTrade(db, owner.id, {
+    marketSlug: "listtrades-deleted-market",
+    side: "yes",
+    entryPrice: 0.5,
+    stake: 10,
+    placedAt: "2024-01-01T00:00:00.000Z",
+  });
+
+  const rows = listTrades(db, { userId: owner.id });
+  const withMarket = rows.find((t) => t.market_slug === "listtrades-price-market");
+  const withoutMarket = rows.find((t) => t.market_slug === "listtrades-deleted-market");
+
+  assert.equal(withMarket.market_current_price, 0.65);
+  assert.equal(withMarket.market_no_price, 0.35);
+  // A trade whose market isn't in the local catalog (e.g. deleted) must
+  // still be returned — just with null prices, not dropped by the join.
+  assert.ok(withoutMarket);
+  assert.equal(withoutMarket.market_current_price, null);
 });

@@ -60,6 +60,18 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
   const [analysisError, setAnalysisError] = useState(null);
   const [lastWasCached, setLastWasCached] = useState(false);
 
+  // "AI analysis of Whales activity" — a second, independent analysis
+  // stream (see api.analyzeWhales/listWhaleAnalyses), mirroring the market
+  // analysis state above but kept separate so the two never mix.
+  const [whaleAnalyses, setWhaleAnalyses] = useState([]);
+  const [selectedWhaleAnalysisId, setSelectedWhaleAnalysisId] = useState(null);
+  const [loadingWhaleAnalysis, setLoadingWhaleAnalysis] = useState(false);
+  const [whaleAnalysisError, setWhaleAnalysisError] = useState(null);
+  const [lastWhaleWasCached, setLastWhaleWasCached] = useState(false);
+  const [whaleFollowUpText, setWhaleFollowUpText] = useState("");
+  const [loadingWhaleFollowUp, setLoadingWhaleFollowUp] = useState(false);
+  const [whaleFollowUpError, setWhaleFollowUpError] = useState(null);
+
   // Reusable prompt templates (Phase 4) — Express/SQLite only; the
   // picker is simply omitted when the endpoint isn't available (Vercel),
   // and the server falls back to whatever default it has configured.
@@ -92,6 +104,9 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
   const selectedAnalysis = analyses.find((a) => a.id === selectedAnalysisId) || null;
   const thread = selectedAnalysis ? buildThread(analyses, selectedAnalysis.id) : [];
 
+  const selectedWhaleAnalysis = whaleAnalyses.find((a) => a.id === selectedWhaleAnalysisId) || null;
+  const whaleThread = selectedWhaleAnalysis ? buildThread(whaleAnalyses, selectedWhaleAnalysis.id) : [];
+
   // Reset the chart and any AI analysis whenever a different market is selected
   useEffect(() => {
     setHistory(null);
@@ -102,6 +117,12 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
     setLastWasCached(false);
     setFollowUpText("");
     setFollowUpError(null);
+    setWhaleAnalyses([]);
+    setSelectedWhaleAnalysisId(null);
+    setWhaleAnalysisError(null);
+    setLastWhaleWasCached(false);
+    setWhaleFollowUpText("");
+    setWhaleFollowUpError(null);
     setTradeFormOpen(false);
     setTradeError(null);
     setLastSavedTrade(null);
@@ -152,6 +173,29 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
       })
       .catch(() => {
         if (!cancelled) setAnalyses([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [market.slug]);
+
+  // Past whale-activity analyses for this market — same shape as the market
+  // analyses effect above, just the "whales" stream. Fetched regardless of
+  // whether this market currently has whale positions (a market can lose
+  // its whale positions after being analyzed, but the history should still
+  // be viewable), though the button to start a new one is only offered
+  // while whalePositions is non-empty (see the render below).
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listWhaleAnalyses(market.slug)
+      .then((rows) => {
+        if (cancelled) return;
+        setWhaleAnalyses(rows);
+        if (rows.length) setSelectedWhaleAnalysisId(rows[0].id);
+      })
+      .catch(() => {
+        if (!cancelled) setWhaleAnalyses([]);
       });
     return () => {
       cancelled = true;
@@ -222,6 +266,40 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
       setFollowUpError(err.message);
     } finally {
       setLoadingFollowUp(false);
+    }
+  };
+
+  const runWhaleAnalysis = async (force) => {
+    setLoadingWhaleAnalysis(true);
+    setWhaleAnalysisError(null);
+    try {
+      const { analysis, cached } = await api.analyzeWhales(market.slug, { force });
+      setLastWhaleWasCached(cached);
+      setWhaleAnalyses((prev) => {
+        const withoutDup = prev.filter((a) => a.id !== analysis.id);
+        return [analysis, ...withoutDup];
+      });
+      setSelectedWhaleAnalysisId(analysis.id);
+    } catch (err) {
+      setWhaleAnalysisError(err.message);
+    } finally {
+      setLoadingWhaleAnalysis(false);
+    }
+  };
+
+  const runWhaleFollowUp = async () => {
+    if (!whaleFollowUpText.trim() || !selectedWhaleAnalysisId) return;
+    setLoadingWhaleFollowUp(true);
+    setWhaleFollowUpError(null);
+    try {
+      const { analysis } = await api.followUpAnalysis(selectedWhaleAnalysisId, whaleFollowUpText.trim());
+      setWhaleAnalyses((prev) => [analysis, ...prev]);
+      setSelectedWhaleAnalysisId(analysis.id);
+      setWhaleFollowUpText("");
+    } catch (err) {
+      setWhaleFollowUpError(err.message);
+    } finally {
+      setLoadingWhaleFollowUp(false);
     }
   };
 
@@ -520,6 +598,92 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
               ))}
             </tbody>
           </table>
+
+          <div className="ai-analysis whale-ai-analysis">
+            <div className="ai-analysis-header">
+              <h4>AI analysis</h4>
+              <div className="ai-analysis-actions">
+                <button
+                  className="btn btn-small"
+                  onClick={() => runWhaleAnalysis(false)}
+                  disabled={loadingWhaleAnalysis}
+                >
+                  {loadingWhaleAnalysis ? "Analyzing…" : "AI analysis of Whales activity"}
+                </button>
+                {whaleAnalyses.length > 0 && (
+                  <button
+                    className="btn btn-small btn-ghost"
+                    onClick={() => runWhaleAnalysis(true)}
+                    disabled={loadingWhaleAnalysis}
+                    title="Always calls DeepSeek again, even if an identical analysis already exists"
+                  >
+                    Re-run
+                  </button>
+                )}
+              </div>
+            </div>
+            {whaleAnalysisError && (
+              <p className="sync-error">
+                {whaleAnalysisError}{" "}
+                {onOpenSettings && (
+                  <button className="link-button" onClick={onOpenSettings}>
+                    Open settings
+                  </button>
+                )}
+              </p>
+            )}
+
+            {whaleAnalyses.length > 1 && (
+              <div className="ai-analysis-history">
+                <label htmlFor="whale-analysis-picker">History ({whaleAnalyses.length})</label>
+                <select
+                  id="whale-analysis-picker"
+                  value={selectedWhaleAnalysisId ?? ""}
+                  onChange={(e) => setSelectedWhaleAnalysisId(Number(e.target.value))}
+                >
+                  {whaleAnalyses.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.parent_analysis_id ? "↳ " : ""}
+                      {new Date(a.created_at).toLocaleString()} · {a.model_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {whaleThread.map((a, i) => (
+              <div key={a.id}>
+                {i > 0 && <p className="ai-analysis-turn-label">Follow-up: {a.prompt_text}</p>}
+                <p className="ai-analysis-meta">
+                  {new Date(a.created_at).toLocaleString()} · {a.model_name}
+                  {a.tokens_used != null && <> · {a.tokens_used} tokens</>}
+                  {lastWhaleWasCached && a.id === whaleAnalyses[0]?.id && a.id === selectedWhaleAnalysisId && (
+                    <> · from history (not re-billed)</>
+                  )}
+                </p>
+                <div className="ai-analysis-text">{a.result_text}</div>
+              </div>
+            ))}
+
+            {selectedWhaleAnalysis && (
+              <div className="ai-analysis-followup">
+                <textarea
+                  rows={2}
+                  placeholder="Ask a follow-up about this whale analysis…"
+                  value={whaleFollowUpText}
+                  onChange={(e) => setWhaleFollowUpText(e.target.value)}
+                />
+                <button
+                  className="btn btn-small"
+                  onClick={runWhaleFollowUp}
+                  disabled={loadingWhaleFollowUp || !whaleFollowUpText.trim()}
+                >
+                  {loadingWhaleFollowUp ? "Asking…" : "Ask follow-up"}
+                </button>
+                {whaleFollowUpError && <p className="sync-error">{whaleFollowUpError}</p>}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

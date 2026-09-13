@@ -188,9 +188,16 @@ export function queryMarkets(
  * across accounts), so this needs the caller's userId bound as @userId. */
 const LATEST_ANALYSIS_SELECT = `
   (SELECT result_text FROM ai_analysis WHERE ai_analysis.market_slug = markets.slug AND ai_analysis.user_id = @userId
-     ORDER BY created_at DESC LIMIT 1) AS last_analysis_text,
+     AND ai_analysis.kind = 'market' ORDER BY created_at DESC LIMIT 1) AS last_analysis_text,
   (SELECT created_at FROM ai_analysis WHERE ai_analysis.market_slug = markets.slug AND ai_analysis.user_id = @userId
-     ORDER BY created_at DESC LIMIT 1) AS last_analysis_at
+     AND ai_analysis.kind = 'market' ORDER BY created_at DESC LIMIT 1) AS last_analysis_at,
+  -- Unlike last_analysis_text/_at above, this is the latest row that HAS a
+  -- value, not just the latest row — a follow-up question's reply doesn't
+  -- re-state FAIR_PROBABILITY_YES (see deepseek.js), and without this it'd
+  -- otherwise blank out a perfectly good estimate from the original run.
+  (SELECT fair_prob_yes FROM ai_analysis WHERE ai_analysis.market_slug = markets.slug AND ai_analysis.user_id = @userId
+     AND ai_analysis.kind = 'market' AND fair_prob_yes IS NOT NULL
+     ORDER BY created_at DESC LIMIT 1) AS fair_prob_yes
 `;
 
 /** Same correlated-subquery approach as LATEST_ANALYSIS_SELECT, but for this
@@ -674,20 +681,23 @@ export function markSavedSearchRun(db, id) {
 
 // AI analysis history (Phase 3) — every DeepSeek call persisted as its own
 // row, keyed for cache/dedup lookups by a hash of exactly what would be
-// sent (market + prompt + model + reasoning effort).
-export function computeInputHash({ marketSlug, promptText, modelName, reasoningEffort }) {
+// sent (market + prompt + model + reasoning effort). `kind` distinguishes a
+// regular market analysis ('market', the default) from an "AI analysis of
+// Whales activity" one ('whales') — see migration 011 — kept in its own
+// independent history/cache stream per market so the two kinds never mix.
+export function computeInputHash({ marketSlug, promptText, modelName, reasoningEffort, kind = "market" }) {
   return crypto
     .createHash("sha256")
-    .update(JSON.stringify({ marketSlug, promptText, modelName, reasoningEffort }))
+    .update(JSON.stringify({ marketSlug, promptText, modelName, reasoningEffort, kind }))
     .digest("hex");
 }
 
-export function findCachedAnalysis(db, userId, inputHash) {
+export function findCachedAnalysis(db, userId, inputHash, kind = "market") {
   return db
     .prepare(
-      "SELECT * FROM ai_analysis WHERE input_hash = ? AND user_id = ? AND status = 'completed' ORDER BY created_at DESC LIMIT 1"
+      "SELECT * FROM ai_analysis WHERE input_hash = ? AND user_id = ? AND kind = ? AND status = 'completed' ORDER BY created_at DESC LIMIT 1"
     )
-    .get(inputHash, userId);
+    .get(inputHash, userId, kind);
 }
 
 export function createAnalysis(
@@ -708,6 +718,8 @@ export function createAnalysis(
     status = "completed",
     error = null,
     parentAnalysisId = null,
+    kind = "market",
+    fairProbYes = null,
   }
 ) {
   const now = new Date().toISOString();
@@ -716,10 +728,10 @@ export function createAnalysis(
       `INSERT INTO ai_analysis
          (user_id, market_slug, prompt_template_id, prompt_text, input_hash, model_name, reasoning_effort,
           result_text, prompt_tokens, completion_tokens, tokens_used, cost_estimate, status, error,
-          parent_analysis_id, created_at)
+          parent_analysis_id, kind, fair_prob_yes, created_at)
        VALUES (@userId, @marketSlug, @promptTemplateId, @promptText, @inputHash, @modelName, @reasoningEffort,
                @resultText, @promptTokens, @completionTokens, @tokensUsed, @costEstimate, @status, @error,
-               @parentAnalysisId, @now)`
+               @parentAnalysisId, @kind, @fairProbYes, @now)`
     )
     .run({
       userId,
@@ -737,6 +749,8 @@ export function createAnalysis(
       status,
       error,
       parentAnalysisId,
+      kind,
+      fairProbYes,
       now,
     });
   return getAnalysis(db, userId, result.lastInsertRowid);
@@ -746,10 +760,10 @@ export function getAnalysis(db, userId, id) {
   return db.prepare("SELECT * FROM ai_analysis WHERE id = ? AND user_id = ?").get(id, userId);
 }
 
-export function listAnalysesForMarket(db, userId, marketSlug) {
+export function listAnalysesForMarket(db, userId, marketSlug, kind = "market") {
   return db
-    .prepare("SELECT * FROM ai_analysis WHERE market_slug = ? AND user_id = ? ORDER BY created_at DESC")
-    .all(marketSlug, userId);
+    .prepare("SELECT * FROM ai_analysis WHERE market_slug = ? AND user_id = ? AND kind = ? ORDER BY created_at DESC")
+    .all(marketSlug, userId, kind);
 }
 
 // Walks an analysis's parent_analysis_id chain from the root down to `id`
@@ -829,23 +843,34 @@ export function getTrade(db, userId, id) {
 
 /** `userId` is optional — omit it only for internal system use (the
  * resolution-checker scheduler), never from an HTTP route. */
+// The market_current_price/market_no_price columns (via a LEFT JOIN — a
+// trade must survive even if its market was since deleted from the local
+// catalog) power the My Trades grid's live "Current price"/"Position
+// value"/"P&L" columns, mirroring how the All Markets grid marks an open
+// trade to market (see MarketGrid.jsx's priceForSide/tradeProfit).
 export function listTrades(db, { status, marketSlug, userId } = {}) {
   const clauses = [];
   const params = [];
   if (userId != null) {
-    clauses.push("user_id = ?");
+    clauses.push("trades.user_id = ?");
     params.push(userId);
   }
   if (status) {
-    clauses.push("status = ?");
+    clauses.push("trades.status = ?");
     params.push(status);
   }
   if (marketSlug) {
-    clauses.push("market_slug = ?");
+    clauses.push("trades.market_slug = ?");
     params.push(marketSlug);
   }
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-  return db.prepare(`SELECT * FROM trades ${where} ORDER BY placed_at DESC`).all(params);
+  return db
+    .prepare(
+      `SELECT trades.*, markets.current_price AS market_current_price, markets.no_price AS market_no_price
+       FROM trades LEFT JOIN markets ON markets.slug = trades.market_slug
+       ${where} ORDER BY trades.placed_at DESC`
+    )
+    .all(params);
 }
 
 // Global across every account on purpose — the resolution-checker batches

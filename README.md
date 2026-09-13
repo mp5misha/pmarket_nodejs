@@ -426,6 +426,20 @@ P&L uses the same buy-side formula as the profitability tracking in a later
 section: for a stake `s` at entry price `p`, `payout = s / p` if the trade's
 side won, else `0`; `profit = payout - s`.
 
+The trades table also shows **Current price**, **Position value**, and
+**P&L** (colored green/red) alongside the existing Payout/Profit columns.
+For an **open** trade these are live, marked to the market's current price
+for whichever side (Yes/No) the trade was placed on: `shares = stake /
+entryPrice`, `Position value = shares × currentPrice`, `P&L = Position value
+− stake`. For a **resolved** trade (won/lost) these two columns simply
+mirror the already-final Payout/Profit — there's nothing further to mark to
+market once a trade is settled. `GET /api/trades` LEFT JOINs each trade to
+its market for `current_price`/`no_price` (a LEFT, not INNER, join — a trade
+survives with a blank current price rather than disappearing if its market
+was ever removed from the local catalog). A **P&L by trade** bar chart above
+the table visualizes the same live/final P&L for every trade in the current
+status tab, colored green/red per bar.
+
 ### Suggested stake (Express/SQLite only)
 
 Inside **Mark as traded**, a **Suggested stake** calculator offers three
@@ -651,6 +665,54 @@ configured either way, the button returns a clear "not configured" error
 (with a link straight to Settings) instead of failing silently. A full
 analysis can take a while — the Vercel function's `maxDuration` is set to
 60s to give it room (still clamped lower on the Hobby plan).
+
+Every market-kind analysis prompt has a fixed instruction appended asking
+DeepSeek to end its reply with a line of the exact form
+`FAIR_PROBABILITY_YES: <0-1 decimal>` — the app parses that line back out
+(`extractFairProbability`) and stores it as the analysis's `fair_prob_yes`,
+without otherwise constraining or reformatting the free-text analysis above
+it. The **All Markets** grid shows this as two columns, **AI fair YES %**
+and **AI fair NO %** (the complement), populated whenever the market's most
+recent market-kind analysis carried one — blank otherwise. A follow-up
+question doesn't restate this line, so the grid keeps showing the latest
+analysis that *did* include one rather than blanking out a good earlier
+estimate.
+
+### Whale activity analysis
+
+A market's detail panel offers a separate **AI analysis of Whales activity**
+button next to the whale-positions table (see **Whales trades** above) —
+shown only when that market currently has at least one top-50 trader's
+position. Clicking it sends DeepSeek a prompt built specifically from that
+market's whale positions, independent of the market-kind analysis above:
+its own prompt, its own history/cache, and its own follow-up thread, never
+mixed with the general **AI analysis (DeepSeek)** section on the same page
+(internally, every analysis row carries a `kind` of `"market"` or
+`"whales"`, and history, caching, and follow-ups are all scoped to it — a
+follow-up inherits its parent's `kind` rather than defaulting back to
+`"market"`).
+
+The default whale-analysis prompt:
+
+> Analyze the whale trading activity for the following Polymarket event:
+> `{slug}`
+>
+> The top-50 leaderboard traders below currently hold a position in this
+> market (each list is numbered in the same order, so entry N in every list
+> is the same trader):
+>
+> Trader: `{whale_name}` · Position direction (Yes/No):
+> `{whale_position_direction}` · Position value: `{whale_position_value}` ·
+> Unrealized P&L: `{whale_unrealized_pnl}`
+
+Configurable from ⚙ **Settings → AI whale analysis**, alongside the
+market-analysis prompt templates. Since a market can have more than one
+whale position, each of the four `{whale_*}` placeholders substitutes to a
+numbered, newline-joined list rather than a single value — one line per
+position, with identical numbering shared across all four so line *N* always
+refers to the same trader in every list. `{slug}` works the same as in the
+market-analysis prompt. **Save prompt**/**Reset to default** work the same
+way as the market-analysis prompt editor.
 
 ### Model selection (Express/SQLite only)
 

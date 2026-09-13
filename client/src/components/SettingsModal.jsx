@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api.js";
 
 const PROMPT_VARIABLES = ["slug", "yes_price", "no_price", "end_date", "liquidity"];
+const WHALE_PROMPT_VARIABLES = ["slug", "whale_name", "whale_position_direction", "whale_position_value", "whale_unrealized_pnl"];
 
 export default function SettingsModal({ onClose, onStatusChange }) {
   const [claimingLegacy, setClaimingLegacy] = useState(false);
@@ -31,6 +32,15 @@ export default function SettingsModal({ onClose, onStatusChange }) {
   const [savingPrompt, setSavingPrompt] = useState(false);
   const [promptError, setPromptError] = useState(null);
   const [promptNote, setPromptNote] = useState(null);
+
+  // "AI analysis of Whales activity" prompt (see MarketDetail.jsx's button
+  // of the same name) — a single configurable prompt, same shape as the
+  // market-analysis prompt above, on both backends.
+  const [whalePromptStatus, setWhalePromptStatus] = useState(null);
+  const [whalePromptDraft, setWhalePromptDraft] = useState("");
+  const [savingWhalePrompt, setSavingWhalePrompt] = useState(false);
+  const [whalePromptError, setWhalePromptError] = useState(null);
+  const [whalePromptNote, setWhalePromptNote] = useState(null);
 
   const [modelStatus, setModelStatus] = useState(null);
   const [modelError, setModelError] = useState(null);
@@ -80,6 +90,16 @@ export default function SettingsModal({ onClose, onStatusChange }) {
       setPromptDraft(p.template);
     } catch (err) {
       setPromptError(err.message);
+    }
+  };
+
+  const refreshWhalePrompt = async () => {
+    try {
+      const p = await api.getWhalePromptTemplate();
+      setWhalePromptStatus(p);
+      setWhalePromptDraft(p.template);
+    } catch (err) {
+      setWhalePromptError(err.message);
     }
   };
 
@@ -138,6 +158,7 @@ export default function SettingsModal({ onClose, onStatusChange }) {
   useEffect(() => {
     refreshStatus();
     refreshPrompt();
+    refreshWhalePrompt();
     refreshModel();
     refreshTemplates();
     refreshBankroll();
@@ -312,6 +333,38 @@ export default function SettingsModal({ onClose, onStatusChange }) {
       setPromptError(err.message);
     } finally {
       setSavingPrompt(false);
+    }
+  };
+
+  const saveWhalePrompt = async () => {
+    if (!whalePromptDraft.trim()) return;
+    setSavingWhalePrompt(true);
+    setWhalePromptError(null);
+    setWhalePromptNote(null);
+    try {
+      const p = await api.setWhalePromptTemplate(whalePromptDraft);
+      setWhalePromptStatus(p);
+      setWhalePromptNote("Prompt saved.");
+    } catch (err) {
+      setWhalePromptError(err.message);
+    } finally {
+      setSavingWhalePrompt(false);
+    }
+  };
+
+  const resetWhalePrompt = async () => {
+    setSavingWhalePrompt(true);
+    setWhalePromptError(null);
+    setWhalePromptNote(null);
+    try {
+      const p = await api.resetWhalePromptTemplate();
+      setWhalePromptStatus(p);
+      setWhalePromptDraft(p.template);
+      setWhalePromptNote("Reset to the default prompt.");
+    } catch (err) {
+      setWhalePromptError(err.message);
+    } finally {
+      setSavingWhalePrompt(false);
     }
   };
 
@@ -545,6 +598,58 @@ export default function SettingsModal({ onClose, onStatusChange }) {
               </div>
             </>
           )}
+
+          <hr className="modal-divider" />
+
+          <p className="settings-label">AI whale analysis</p>
+          <p className="settings-hint">
+            Sent to DeepSeek when you click <strong>AI analysis of Whales activity</strong> on a
+            market's detail panel (only offered when that market has at least one top-50 leaderboard
+            trader currently holding a position — see the <strong>Whales trades</strong> tab). Since a
+            market can have more than one whale position, each variable below fills in as a numbered
+            list, one line per position, with the same numbering across all four — so line 2 of{" "}
+            <code>{"{whale_name}"}</code> is the same trader as line 2 of every other whale variable.
+          </p>
+
+          {whalePromptStatus && (
+            <p className="settings-status">
+              {whalePromptStatus.isDefault ? "Using the default prompt" : "Custom prompt"}
+            </p>
+          )}
+
+          <textarea
+            className="prompt-textarea"
+            rows={7}
+            value={whalePromptDraft}
+            onChange={(e) => setWhalePromptDraft(e.target.value)}
+          />
+
+          <p className="settings-hint">
+            Variables:{" "}
+            {WHALE_PROMPT_VARIABLES.map((v, i) => (
+              <span key={v}>
+                <code>{`{${v}}`}</code>
+                {i < WHALE_PROMPT_VARIABLES.length - 1 ? ", " : ""}
+              </span>
+            ))}
+            .
+          </p>
+
+          {whalePromptError && <p className="sync-error">{whalePromptError}</p>}
+          {whalePromptNote && <p className="settings-note">{whalePromptNote}</p>}
+
+          <div className="modal-actions">
+            <button className="btn btn-ghost" onClick={resetWhalePrompt} disabled={savingWhalePrompt}>
+              Reset to default
+            </button>
+            <button
+              className="btn"
+              onClick={saveWhalePrompt}
+              disabled={savingWhalePrompt || !whalePromptDraft.trim()}
+            >
+              {savingWhalePrompt ? "Saving…" : "Save prompt"}
+            </button>
+          </div>
 
           <hr className="modal-divider" />
 

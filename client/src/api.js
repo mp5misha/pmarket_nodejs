@@ -78,6 +78,19 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text }),
     }).then(handle),
+  // "AI analysis of Whales activity" — a second, independent analysis
+  // stream on the same market/route, selected via kind: "whales" (see
+  // server/src/index.js's /api/markets/:slug/analyze and .../analyses).
+  // followUpAnalysis() above is reused as-is for whale-analysis follow-ups
+  // too — the parent analysis's own stored kind carries through server-side.
+  analyzeWhales: (slug, { force = false } = {}) =>
+    req(`${BASE}/markets/${encodeURIComponent(slug)}/analyze`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force, kind: "whales" }),
+    }).then(handle),
+  listWhaleAnalyses: (slug) =>
+    req(`${BASE}/markets/${encodeURIComponent(slug)}/analyses?kind=whales`).then(handle),
   // Reusable prompt templates (Phase 4). Express/SQLite only — callers
   // should treat rejection as "feature unavailable here", same as
   // saved searches/fetch runs.
@@ -156,6 +169,21 @@ export const api = {
     }).then(handle),
   resetPromptTemplate: () =>
     req(`${BASE}/settings/deepseek-prompt`, { method: "DELETE" }).then(handle),
+  // The "AI analysis of Whales activity" prompt — supports {slug}/
+  // {whale_name}/{whale_position_direction}/{whale_position_value}/
+  // {whale_unrealized_pnl} placeholders (see deepseek.js's
+  // buildWhaleAnalysisPrompt). A single configurable prompt, same shape as
+  // getPromptTemplate above, on both backends (no Phase 4 named-templates
+  // system for this one).
+  getWhalePromptTemplate: () => req(`${BASE}/settings/deepseek-whale-prompt`).then(handle),
+  setWhalePromptTemplate: (template) =>
+    req(`${BASE}/settings/deepseek-whale-prompt`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ template }),
+    }).then(handle),
+  resetWhalePromptTemplate: () =>
+    req(`${BASE}/settings/deepseek-whale-prompt`, { method: "DELETE" }).then(handle),
   // DeepSeek model + reasoning effort (Phase 3): deepseek-flash/deepseek-v4-pro,
   // non-thinking/thinking/thinking (max).
   getDeepSeekModelStatus: () => req(`${BASE}/settings/deepseek-model`).then(handle),

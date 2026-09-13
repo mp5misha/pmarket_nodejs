@@ -57,22 +57,106 @@ function fmtMoney(v) {
   return v === null || v === undefined ? "unknown" : `$${Number(v).toLocaleString()}`;
 }
 
+// Appended (not user-editable — every market-kind prompt gets this
+// regardless of template customization) so the grid's "AI fair YES %"/"AI
+// fair NO %" columns have something to parse, without forcing every prompt
+// template author to remember to ask for it themselves. Deliberately asks
+// for one line in a fixed, easy-to-regex format rather than switching the
+// whole response to JSON mode — the free-text analysis itself (still
+// rendered as prose in the detail panel) is otherwise unaffected.
+const FAIR_PROBABILITY_INSTRUCTION =
+  "\n\nAfter your analysis, on its own final line, output exactly (no other " +
+  "text on that line): FAIR_PROBABILITY_YES: <your estimated probability " +
+  "that this resolves YES, as a decimal between 0 and 1>";
+
+const FAIR_PROBABILITY_RE = /FAIR_PROBABILITY_YES:\s*([01](?:\.\d+)?|\.\d+)/i;
+
+/** Pulls the FAIR_PROBABILITY_YES line back out of a market-kind analysis's
+ * response text — null if the model didn't include one (an older prompt,
+ * or it just didn't follow the instruction). Doesn't strip the line from
+ * the stored/rendered result_text; it's a legible, on-topic closing line,
+ * not clutter. */
+export function extractFairProbability(resultText) {
+  if (!resultText) return null;
+  const match = resultText.match(FAIR_PROBABILITY_RE);
+  if (!match) return null;
+  const n = Number(match[1]);
+  return Number.isFinite(n) && n >= 0 && n <= 1 ? n : null;
+}
+
 /** Fills a prompt template's {slug}/{yes_price}/{no_price}/{end_date}/
  * {liquidity} placeholders from a market row (server's snake_case shape:
  * current_price, no_price, resolution_date, liquidity). */
 export function buildAnalysisPrompt(market, template = DEFAULT_PROMPT_TEMPLATE) {
-  return template
+  const filled = template
     .replaceAll("{slug}", market.slug ?? "unknown")
     .replaceAll("{yes_price}", fmtPrice(market.current_price))
     .replaceAll("{no_price}", fmtPrice(market.no_price))
     .replaceAll("{end_date}", fmtDate(market.resolution_date))
     .replaceAll("{liquidity}", fmtMoney(market.liquidity));
+  return filled + FAIR_PROBABILITY_INSTRUCTION;
 }
 
-/** Shared chat-completions call used by both a fresh analysis (a single user
- * message) and a follow-up (the reconstructed thread plus the new
- * question) — everything except the `messages` array is identical. */
-async function callChatCompletions(messages, { apiKey, model, reasoningEffort } = {}) {
+// Placeholders the whale-analysis prompt template may reference. Since a
+// market can have several whale positions (from different top-50 traders),
+// each of these substitutes to a newline-separated, "N. value" numbered
+// list — one line per position, all four lists sharing the same numbering
+// so a reader (human or model) can match up row N across all four.
+export const WHALE_PROMPT_VARIABLES = [
+  "slug",
+  "whale_name",
+  "whale_position_direction",
+  "whale_position_value",
+  "whale_unrealized_pnl",
+];
+
+export const DEFAULT_WHALE_PROMPT_TEMPLATE =
+  "Analyze the whale trading activity for the following Polymarket event: {slug}\n\n" +
+  "The top-50 leaderboard traders below currently hold a position in this market " +
+  "(each list is numbered in the same order, so entry N in every list is the same trader):\n\n" +
+  "Trader:\n{whale_name}\n\n" +
+  "Position direction (Yes/No):\n{whale_position_direction}\n\n" +
+  "Position value:\n{whale_position_value}\n\n" +
+  "Unrealized P&L:\n{whale_unrealized_pnl}\n\n" +
+  "Based on this whale activity, assess whether it signals bullish or bearish " +
+  "conviction for this market, and whether the positioning suggests informed/" +
+  "smart money confidence in a particular outcome.";
+
+function whaleLabel(w) {
+  if (w.traderName) return w.traderName;
+  const addr = w.traderWallet;
+  return addr && addr.length > 10 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr || "Unknown trader";
+}
+
+function fmtPnl(cashPnl, percentPnl) {
+  const money = fmtMoney(cashPnl);
+  if (percentPnl == null) return money;
+  return `${money} (${(Number(percentPnl) * 100).toFixed(1)}%)`;
+}
+
+/** Fills a whale-analysis prompt template's {slug}/{whale_name}/
+ * {whale_position_direction}/{whale_position_value}/{whale_unrealized_pnl}
+ * placeholders. `whalePositions` is the market's whalePositions array (see
+ * whales.js's getWhalePositionsForSlug) — must be non-empty; callers should
+ * only offer this analysis when a market actually has whale positions. */
+export function buildWhaleAnalysisPrompt(market, whalePositions, template = DEFAULT_WHALE_PROMPT_TEMPLATE) {
+  const numbered = (fn) => whalePositions.map((w, i) => `${i + 1}. ${fn(w)}`).join("\n");
+  return template
+    .replaceAll("{slug}", market.slug ?? "unknown")
+    .replaceAll("{whale_name}", numbered(whaleLabel))
+    .replaceAll("{whale_position_direction}", numbered((w) => (w.outcome ? w.outcome : "unknown")))
+    .replaceAll("{whale_position_value}", numbered((w) => fmtMoney(w.currentValue)))
+    .replaceAll("{whale_unrealized_pnl}", numbered((w) => fmtPnl(w.cashPnl, w.percentPnl)));
+}
+
+/** Shared chat-completions call used by a fresh market analysis, a
+ * follow-up (the reconstructed thread plus the new question), and a
+ * whale-activity analysis (see buildWhaleAnalysisPrompt below) — everything
+ * except the `messages` array is identical, so this is exported directly
+ * for callers that already have a fully-built prompt string rather than
+ * going through analyzeMarket (which builds its own market-analysis prompt
+ * internally via buildAnalysisPrompt). */
+export async function callChatCompletions(messages, { apiKey, model, reasoningEffort } = {}) {
   const key = apiKey || process.env.DEEPSEEK_API_KEY;
   if (!key) {
     throw new Error(

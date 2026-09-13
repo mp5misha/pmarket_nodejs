@@ -10,7 +10,8 @@ export default async function handler(req, res) {
     await ensureSchema(pool);
     const row = await getMarket(pool, req.query.slug);
     if (!row) return res.status(404).json({ error: "Market not found" });
-    res.status(200).json(await listAnalysesForMarket(pool, row.slug));
+    const kind = req.query.kind === "whales" ? "whales" : "market";
+    res.status(200).json(await listAnalysesForMarket(pool, row.slug, kind));
   } catch (err) {
     res.status(500).json({ error: String(err.message ?? err) });
   }
