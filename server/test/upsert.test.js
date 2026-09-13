@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { getDb, upsertMarket, getMarket, getStats, deleteMarkets } from "../src/db.js";
+import { getDb, upsertMarket, getMarket, getStats, deleteMarkets, queryMarketsGrouped } from "../src/db.js";
 
 const dbPath = path.join(os.tmpdir(), `upsert-test-${Date.now()}-${process.pid}.db`);
 let db;
@@ -112,4 +112,36 @@ test("deleteMarkets removes the given slugs and leaves others untouched", () => 
 test("deleteMarkets on an already-missing slug is a harmless no-op", () => {
   const deleted = deleteMarkets(db, ["never-existed"]);
   assert.equal(deleted, 0);
+});
+
+test("status filter treats a past resolution_date as resolved even when closed is stale", () => {
+  upsertMarket(db, {
+    slug: "stale-resolved",
+    question: "Stale resolved market",
+    currentPrice: 0.5,
+    noPrice: 0.5,
+    active: true,
+    closed: false, // stale — never re-synced since it resolved
+    resolutionDate: "2020-01-01T00:00:00.000Z",
+  });
+  upsertMarket(db, {
+    slug: "truly-active",
+    question: "Truly active market",
+    currentPrice: 0.5,
+    noPrice: 0.5,
+    active: true,
+    closed: false,
+    resolutionDate: "2099-01-01T00:00:00.000Z",
+  });
+
+  const activeSlugs = queryMarketsGrouped(db, { status: "active" }).groups.flatMap((g) =>
+    g.markets.map((m) => m.slug)
+  );
+  const resolvedSlugs = queryMarketsGrouped(db, { status: "closed" }).groups.flatMap((g) =>
+    g.markets.map((m) => m.slug)
+  );
+  assert.ok(!activeSlugs.includes("stale-resolved"));
+  assert.ok(activeSlugs.includes("truly-active"));
+  assert.ok(resolvedSlugs.includes("stale-resolved"));
+  assert.ok(!resolvedSlugs.includes("truly-active"));
 });

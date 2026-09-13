@@ -94,8 +94,19 @@ function buildMarketFilters({ search, status, minVolume, minPrice, maxPrice, tag
     clauses.push("(question LIKE @search OR slug LIKE @search)");
     params.search = `%${search}%`;
   }
-  if (status === "active") clauses.push("active = 1");
-  if (status === "closed") clauses.push("closed = 1");
+  // A market is treated as resolved once its resolution date has passed,
+  // regardless of the stored `closed` flag — that flag only updates when
+  // the market is actually re-synced, so it goes stale forever once a
+  // market stops being returned by an "active only" sync (see
+  // Sidebar.jsx's sync status default). Resolution date is the more
+  // reliable signal since it doesn't depend on re-syncing at all.
+  if (status === "active") {
+    clauses.push("(IFNULL(closed, 0) = 0) AND (resolution_date IS NULL OR resolution_date >= @statusNow)");
+    params.statusNow = new Date().toISOString();
+  } else if (status === "closed") {
+    clauses.push("(closed = 1 OR (resolution_date IS NOT NULL AND resolution_date < @statusNow))");
+    params.statusNow = new Date().toISOString();
+  }
   if (minVolume) {
     clauses.push("COALESCE(volume, 0) >= @minVolume");
     params.minVolume = minVolume;

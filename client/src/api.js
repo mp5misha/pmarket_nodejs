@@ -120,7 +120,8 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(opts),
     }).then(handle),
-  exportUrl: () => `${BASE}/export`,
+  // See stats()/tags() above re: /api/meta/export vs. /api/export.
+  exportUrl: () => `${BASE}/meta/export`,
   // Settings: the DeepSeek API key, configurable from the app itself instead
   // of only via the DEEPSEEK_API_KEY environment variable. The key itself is
   // never sent back — only whether one is set and where it came from.

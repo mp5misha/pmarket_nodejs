@@ -420,14 +420,30 @@ app.get("/api/stats", (req, res) => {
   res.json(getStats(getDb(DEFAULT_DB_PATH)));
 });
 
-// Alias for /api/stats and /api/tags (below) — the client calls these under
-// /api/meta/* because the Vercel deploy merges them into one function
-// (api/meta/[key].js) to fit the Hobby plan's function-count budget. Express
-// has no such constraint, so both old and new paths work here.
+// Alias for /api/stats, /api/tags, and /api/export (below) — the client
+// calls these under /api/meta/* because the Vercel deploy merges them into
+// one function (api/meta/[key].js) to fit the Hobby plan's function-count
+// budget. Express has no such constraint, so both old and new paths work
+// here.
 app.get("/api/meta/:key", (req, res) => {
   const db = getDb(DEFAULT_DB_PATH);
   if (req.params.key === "stats") return res.json(getStats(db));
   if (req.params.key === "tags") return res.json(getTags(db));
+  if (req.params.key === "export") {
+    const rows = getAllForExport(db);
+    if (!rows.length) return res.status(404).send("No data to export yet");
+    const cols = Object.keys(rows[0]);
+    const escape = (v) => {
+      if (v === null || v === undefined) return "";
+      const s = String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [cols.join(",")];
+    for (const r of rows) lines.push(cols.map((c) => escape(r[c])).join(","));
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", "attachment; filename=markets.csv");
+    return res.send(lines.join("\n"));
+  }
   res.status(404).json({ error: "Not found" });
 });
 

@@ -53,8 +53,12 @@ functions; `api/**/*.js` is deliberately kept at exactly that limit. A
 dynamic route file (e.g. `api/settings/[key].js`) counts once regardless of
 how many values that segment matches, which is how a few logically-separate
 endpoints share one physical file: `api/settings/[key].js` serves
-`deepseek-key` and `deepseek-prompt`; `api/meta/[key].js` serves `stats` and
-`tags`. **Only single dynamic segments are used for this** (`[key].js`, or
+`deepseek-key` and `deepseek-prompt`; `api/meta/[key].js` serves `stats`,
+`tags`, and `export` (formerly three separate files — `api/stats.js`,
+`api/tags.js`, `api/export.js` — merged here to make room for
+`api/markets/[slug]/analyses.js`, which took the freed slot; both Express
+routes for each merged pair, old path and new `/api/meta/*` alias, stay in
+place). **Only single dynamic segments are used for this** (`[key].js`, or
 a `[slug]/` folder containing plain static filenames like
 `api/markets/[slug]/analyze.js`) — never a catch-all (`[...x].js` or
 `[[...x]].js`). An earlier version of this deploy tried consolidating
@@ -295,7 +299,11 @@ everything that account owns to you; it's safe to click more than once
   grouped`'s `status` param rather than filtering only what's already on the
   page), filter by minimum volume, filter by price range (min/max current
   Yes price), and filter by category/tag (populated from whatever's been
-  synced). Markets that share a
+  synced). **Resolved** means the stored `closed` flag is true *or* the
+  market's resolution date has already passed, whichever is true first —
+  not just the flag alone, since that only updates on an actual re-sync (see
+  the sidebar bullet above) and would otherwise report a market as active
+  indefinitely after it resolves. Markets that share a
   Polymarket event (e.g. each candidate in an election) are grouped under one
   event header row instead of appearing as unrelated rows; a market with no
   event is its own single-row group. Each row shows Yes price, No price, and
@@ -526,11 +534,14 @@ The estimated cost is a rough budgeting figure computed from DeepSeek's
 published per-token list pricing (which varies by peak/off-peak time and
 cache hits) — not an accounting-accurate number.
 
-**On the frozen Vercel deploy, "past analyses" only means this browser
-tab's current session** — there's no `/api/markets/:slug/analyses` route
-there (no Hobby-plan function budget left for it — see **Function count**
-above), so the History dropdown and follow-up threading only see analyses
-run since the page was last loaded, not ones from a previous visit.
+The frozen Vercel deploy persists analyses the same way (`api/markets/
+[slug]/analyses.js` serves the History dropdown's data there too) — an
+earlier version of this deploy dropped that route to save Hobby-plan
+function budget, which meant switching to another market and back lost
+every analysis from that session (still safely in Postgres, just with no
+way for the UI to fetch it back). It's back now; `api/export.js`,
+`api/stats.js`, and `api/tags.js` were merged into `api/meta/[key].js` (see
+**Function count** above) to make room.
 
 ### Prompt templates and follow-ups
 
