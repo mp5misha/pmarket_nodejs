@@ -281,10 +281,23 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
     }
   };
 
+  // Both sites key event pages off the Polymarket event slug
+  // (/event/{event-slug}); a standalone market with no event of its own
+  // uses its own slug, which Polymarket treats the same way.
+  const eventUrlSlug = encodeURIComponent(market.event_slug || market.slug);
+
   return (
     <section className="detail">
       <h3>{market.question}</h3>
       {market.event_title && <p className="event-note">Part of: {market.event_title}</p>}
+      <p className="external-links">
+        <a href={`https://polymarket.com/event/${eventUrlSlug}`} target="_blank" rel="noopener noreferrer">
+          View on polymarket.com ↗
+        </a>
+        <a href={`https://polym.trade/event/${eventUrlSlug}`} target="_blank" rel="noopener noreferrer">
+          View on polym.trade ↗
+        </a>
+      </p>
 
       <div className="metrics">
         <div className="metric">

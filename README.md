@@ -389,7 +389,10 @@ everything that account owns to you; it's safe to click more than once
   Polymarket event, e.g. other candidates in the same election — click one
   to jump straight to it), a **Load price history chart** button, a **Mark
   as traded** action (see below), and an **Analyze with DeepSeek** button
-  (see below).
+  (see below). Right under the title, **View on polymarket.com** and **View
+  on polym.trade** links open that market's event page on each site in a new
+  tab — both keyed off the market's Polymarket event slug (falling back to
+  the market's own slug for a standalone market with no event).
 - **Export CSV** in the sidebar downloads everything currently stored.
 
 ## Trades and P&L

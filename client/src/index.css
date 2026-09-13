@@ -620,6 +620,22 @@ table.ledger tbody tr.trade-row-down:hover {
   margin: 0;
 }
 
+.external-links {
+  display: flex;
+  gap: 14px;
+  margin: 6px 0 0;
+}
+
+.external-links a {
+  font-size: 12.5px;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.external-links a:hover {
+  text-decoration: underline;
+}
+
 .metrics {
   display: flex;
   gap: 34px;
