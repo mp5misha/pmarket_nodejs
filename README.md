@@ -33,35 +33,37 @@ below — because a single serverless function can't run for several minutes
 the way the old click-and-wait sync did.
 
 **This deploy has no login** — it's frozen at the pre-Phase-8 feature set,
-so there are no accounts and every visitor shares one global dataset. Market
-Discovery (saved searches, ad hoc/scheduled fetches), AI analysis history
-with follow-ups, and trade tracking with profitability analytics *are*
-implemented here (Postgres-backed, mirroring `server/`'s tables minus the
-per-user scoping) — what's missing is Phase 7's bankroll ledger/bet-sizing
-and Phase 4's reusable prompt templates, which still only exist on
-`server/`. A saved search's "auto re-run every N minutes" field is stored
-but never executes on this deploy target — there's no background job runner
-in a plain serverless deployment without a separately-configured Vercel Cron
-job, which doesn't exist yet. The shared client detects a backend with no
-`/api/auth/*` routes and skips the login screen entirely rather than showing
-one with nowhere for it to lead. For full parity (accounts, bankroll,
-prompt templates, scheduled reruns), deploy `server/` instead (see the two
-options below).
+so there are no accounts and every visitor shares one global dataset.
+AI analysis with a persisted history and follow-up questions *is*
+implemented here (Postgres-backed, mirroring `server/`'s `ai_analysis`
+table minus per-user scoping) — what's missing is Market Discovery (saved
+searches, fetch-run auditing), trade tracking/bankroll/profitability, and
+Phase 4's reusable prompt templates, which only exist on `server/` (see
+**Function count** below for why: there isn't Hobby-plan budget left for
+them on top of everything else). Market Discovery's ad hoc "Fetch now"
+still works here (it's a plain sync, not a saved-search feature) — see
+**How sync works on Vercel** below. The shared client detects a backend
+with no `/api/auth/*` routes and skips the login screen entirely rather
+than showing one with nowhere for it to lead. For full parity, deploy
+`server/` instead (see the two options below).
 
 **Function count:** the Hobby plan caps a deployment at 12 serverless
 functions; `api/**/*.js` is deliberately kept at exactly that limit. A
-dynamic or catch-all route file (e.g. `api/settings/[key].js`,
-`api/trades/[[...id]].js`) counts once regardless of how many path values it
-matches, which is how several logically-separate endpoints share one
-physical file: `api/settings/[key].js` serves `deepseek-key` and
-`deepseek-prompt`; `api/markets/[slug]/[[...action]].js` serves a market's
-index/history/related/analyze/analyses; `api/analyses/[[...id]].js` serves
-a single analysis and its follow-up; `api/saved-searches/[[...id]].js`
-serves the full saved-search CRUD; `api/trades/[[...id]].js` serves trades
-list/create/delete/check-resolutions/analytics/export. Adding a new *route*
-usually fits inside one of these dispatchers; adding a genuinely new
-top-level resource needs either removing/merging another file first or a
-Pro plan.
+dynamic route file (e.g. `api/settings/[key].js`) counts once regardless of
+how many values that segment matches, which is how a couple of logically-
+separate endpoints share one physical file: `api/settings/[key].js` serves
+`deepseek-key` and `deepseek-prompt`; `api/meta/[key].js` serves `stats` and
+`tags`. **Only single dynamic segments are used for this** (`[key].js`, or
+a `[slug]/` folder containing plain static filenames like
+`api/markets/[slug]/analyze.js`) — never a catch-all (`[...x].js` or
+`[[...x]].js`). An earlier version of this deploy tried consolidating
+`api/markets/[slug]/*` into one `[[...action]].js` catch-all file to save
+function budget; catch-all routing is unreliable in a plain (non-Next.js)
+Vercel deployment like this one and it broke market details in production.
+Don't reintroduce it — if you need more budget than single-segment
+consolidation can free up, either drop a route/feature or move to a Pro
+plan (100-function limit), and test any file-count change against a real
+Vercel deployment before relying on it, not just locally.
 
 **1. Provision a free Postgres database (Neon, via Vercel's own integration):**
 - In your Vercel project → **Storage** tab → **Create Database** → **Neon**
@@ -295,7 +297,7 @@ everything that account owns to you; it's safe to click more than once
   (see below).
 - **Export CSV** in the sidebar downloads everything currently stored.
 
-## Trades and P&L
+## Trades and P&L (Express/SQLite only)
 
 Click **Mark as traded** on a market's detail panel to record a manual
 trade: side (Yes/No, pre-filling that side's current price as the entry
@@ -303,16 +305,19 @@ price — editable), stake, and an optional note. The **My Trades** tab lists
 every recorded trade with tabs for All/Open/Won/Lost, a running net P&L
 total, and a **Check resolutions now** button.
 
-A trade's resolution check — refreshing the price/closed status of any
-market with an open trade, and once that market is closed and its Yes price
-has settled to (near) 0 or 1, matching how Polymarket represents a final
-outcome, marking each open trade **Won** or **Lost** based on which side
-actually won — is the same on both backends; the difference is what
-triggers it. The Express/SQLite backend also runs it automatically every 60
-seconds (an in-process check, same interval approach as Market Discovery's
-scheduled reruns); the frozen Vercel deploy has no background timer, so
-**Check resolutions now** (which runs the identical check immediately, on
-both backends) is the only way to resolve a trade there.
+Trades resolve automatically: an in-process check (same interval approach
+as Market Discovery's scheduled reruns) runs every 60 seconds, refreshes
+the price/closed status of any market with an open trade, and — once that
+market is closed and its Yes price has settled to (near) 0 or 1, matching
+how Polymarket represents a final outcome — marks each open trade **Won**
+or **Lost** based on which side actually won. **Check resolutions now**
+runs the same check immediately instead of waiting for the next tick.
+
+This is Express/SQLite only — the frozen Vercel deploy has no `/api/trades`
+route at all (no Hobby-plan function budget left for it — see **Function
+count** above), so **Mark as traded** and the **My Trades** tab show "Trade
+tracking isn't available on this deploy target yet." there instead of
+erroring out.
 
 P&L uses the same buy-side formula as the profitability tracking in a later
 section: for a stake `s` at entry price `p`, `payout = s / p` if the trade's
@@ -369,12 +374,10 @@ The bankroll balance is always `startingAmount + sum(all ledger entries)`,
 computed fresh on every read rather than stored as its own number, so it
 can never drift out of sync with the ledger.
 
-### Profitability tracking
+### Profitability tracking (Express/SQLite only)
 
 Once you have at least one resolved (won/lost) trade, **My Trades** shows a
-**Profitability** section below the bankroll dashboard (on the frozen
-Vercel deploy, which has no bankroll dashboard, this section appears on its
-own instead):
+**Profitability** section below the bankroll dashboard:
 
 - **ROI** — total profit ÷ total staked, across every resolved trade.
 - **Win rate** — won ÷ (won + lost).
@@ -401,7 +404,7 @@ estimates are well-calibrated.
 with entry price, stake, estimated probability, payout, profit, and
 timestamps.
 
-## Market Discovery
+## Market Discovery (Express/SQLite only)
 
 The **Market Discovery** tab (next to **All Markets**) is a configurable
 screen for building and reusing catalog-fetch filters, separate from the
@@ -427,16 +430,17 @@ sidebar's quick "Run sync":
   is recorded with its start time, status, filters, and how many markets
   were added vs. updated, shown in the **Recent fetch runs** table.
 
-Saved searches (`/api/saved-searches`) and fetch itself work the same way on
-both backends. Two things don't carry over to the frozen Vercel/Postgres
-deploy: **scheduled reruns don't execute** there (schedule_minutes is stored
-but nothing polls it — no in-process scheduler in a serverless deployment,
-and no Vercel Cron job wired up yet; only manual **Run**/**Fetch now** work),
-and **fetch-run auditing** (`/api/fetch-runs`, the **Recent fetch runs**
-table) isn't implemented there — that table degrades gracefully to "no fetch
-runs recorded yet" regardless of whether a fetch actually ran. The fetch
-button's own summary line ("Fetched N market(s): X added, Y updated") is
-what confirms a fetch worked on that deploy target.
+This tab, saved searches, and fetch-run auditing are **only implemented on
+the Express/SQLite backend** — they call `/api/saved-searches` and
+`/api/fetch-runs`, which don't exist on the frozen Vercel/Postgres deploy
+(no Hobby-plan function budget left for them — see **Function count**
+above). The screen degrades gracefully there (shows "not available on this
+deploy target" and disables **Save search**) rather than erroring out.
+**Fetch now itself still works on Vercel** (it's `api/sync/step.js`, not a
+saved-search feature) — its own summary line ("Fetched N market(s): X
+added, Y updated") is what confirms a fetch worked there, since the
+**Recent fetch runs** audit table always reads empty on that deploy target
+regardless of whether a fetch actually ran.
 
 ## AI analysis (DeepSeek)
 
@@ -496,31 +500,35 @@ and a reasoning depth:
 The choice is saved server-side (same settings store as the API key/prompt)
 and applies to every analysis until changed.
 
-### Analysis history (Express/SQLite only)
+### Analysis history
 
-Every analysis is now kept, not just the latest one. A market's detail panel
+Every analysis is kept, not just the latest one. A market's detail panel
 shows:
 
-- **Analyze with DeepSeek** — if an analysis already exists for the exact
-  same market, prompt, model, and reasoning effort, it's served instantly
-  from history instead of billing DeepSeek again ("from history (not
-  re-billed)"). Otherwise it calls DeepSeek and saves a new record.
+- **Analyze with DeepSeek** — on the Express/SQLite backend, if an analysis
+  already exists for the exact same market, prompt, model, and reasoning
+  effort, it's served instantly from history instead of billing DeepSeek
+  again ("from history (not re-billed)"); otherwise it calls DeepSeek and
+  saves a new record. The frozen Vercel deploy always calls DeepSeek fresh
+  (no cache-or-rebill choice, model/reasoning-effort selection, or cost
+  estimate there) but does persist the result.
 - **Re-run** (shown once at least one analysis exists) — always calls
   DeepSeek again and saves a new record, even if the inputs are identical to
   a previous run. Use this to get a fresh take, or after DeepSeek's answer
   seems stale.
 - A **History** dropdown (once there's more than one analysis) to switch
   between past runs, each showing its timestamp, model, reasoning effort,
-  token usage, and an estimated cost.
+  token usage, and an estimated cost (the last three: Express/SQLite only).
 
 The estimated cost is a rough budgeting figure computed from DeepSeek's
 published per-token list pricing (which varies by peak/off-peak time and
-cache hits) — not an accounting-accurate number, and only shown on the
-Express/SQLite backend, which is also the only one that serves a repeat
-analysis from history instead of re-billing DeepSeek; the frozen Vercel
-deploy always calls DeepSeek fresh (analysis history and follow-ups are
-still persisted there, just without the cache-or-rebill choice, model/
-reasoning-effort selection, or a cost estimate).
+cache hits) — not an accounting-accurate number.
+
+**On the frozen Vercel deploy, "past analyses" only means this browser
+tab's current session** — there's no `/api/markets/:slug/analyses` route
+there (no Hobby-plan function budget left for it — see **Function count**
+above), so the History dropdown and follow-up threading only see analyses
+run since the page was last loaded, not ones from a previous visit.
 
 ### Prompt templates and follow-ups
 
@@ -534,11 +542,13 @@ template produced it. The frozen Vercel deploy has no template picker
 single saved prompt.
 
 Once an analysis exists, an **Ask a follow-up** box appears below it, on
-both backends. A follow-up sends DeepSeek the *entire reconstructed
-conversation* — every ancestor's original prompt and reply, in order — plus
-the new question, so it can build on that context rather than starting
-cold. Each follow-up is its own new analysis row (never served from cache,
-since it's a new question) linked to its parent; the History dropdown marks
+both backends (on Vercel, only for an analysis run in the current session —
+see **Analysis history** above). A follow-up sends DeepSeek the *entire
+reconstructed conversation* — every ancestor's original prompt and reply,
+in order — plus the new question, so it can build on that context rather
+than starting cold. Each follow-up is its own new analysis row (never
+served from cache, since it's a new question) linked to its parent; the
+History dropdown marks
 these with a "↳", and selecting one renders the whole thread from the root
 down, labeling each turn ("Follow-up: <question>").
 

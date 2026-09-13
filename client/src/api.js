@@ -24,7 +24,11 @@ function req(url, options) {
 }
 
 export const api = {
-  stats: () => req(`${BASE}/stats`).then(handle),
+  // Served from /api/meta/stats on Vercel (merged with tags into one
+  // function to fit the Hobby plan's function-count budget) and from
+  // /api/stats on Express — both routes exist on Express so this URL works
+  // either way.
+  stats: () => req(`${BASE}/meta/stats`).then(handle),
   markets: (params = {}) => {
     const qs = new URLSearchParams(
       Object.entries(params).filter(([, v]) => v !== undefined && v !== "" && v !== null)
@@ -45,7 +49,8 @@ export const api = {
   // Sibling markets under the same Polymarket event (e.g. other candidates
   // in the same election), for the detail panel's "related markets" list.
   related: (slug) => req(`${BASE}/markets/${encodeURIComponent(slug)}/related`).then(handle),
-  tags: () => req(`${BASE}/tags`).then(handle),
+  // See stats() above re: /api/meta/tags vs. /api/tags.
+  tags: () => req(`${BASE}/meta/tags`).then(handle),
   // Asks DeepSeek to analyze one market's real probability and background —
   // can take a while (up to a minute or so), so no client-side timeout here.
   // Without force, a completed analysis with identical inputs (market +

@@ -6,11 +6,14 @@ import { useCatalogFetch } from "../hooks/useCatalogFetch.js";
 // category/tag, min liquidity/volume, active/resolved status, and keyword;
 // save named search configs; run an ad hoc "Fetch now"; optionally schedule
 // a saved search to rerun automatically; and review an audit trail of every
-// fetch run. Saved searches work on every deploy target; the fetch-run audit
-// trail (listFetchRuns/createFetchRun/completeFetchRun) still doesn't exist
-// on the frozen Vercel deploy, so that table degrades gracefully there —
-// doFetch's own summary message (below) is what actually confirms a fetch
-// worked, independent of that audit trail.
+// fetch run. Saved-search/fetch-run endpoints don't exist on the frozen
+// Vercel deploy (see README's "Function count" section for why — Vercel
+// Hobby's 12-serverless-function cap didn't leave room for them once
+// api/analyses/[id]/follow-up.js was added), so this screen degrades to
+// "feature unavailable" there instead of breaking. Fetch now itself still
+// works there (api/sync/step.js) — doFetch's own summary message (below) is
+// what confirms it worked, independent of the (also Vercel-unimplemented)
+// fetch-run audit table.
 export default function MarketDiscovery({ tags }) {
   const [name, setName] = useState("");
   const [status, setStatus] = useState("active");
@@ -261,7 +264,12 @@ export default function MarketDiscovery({ tags }) {
           >
             {syncStatus.running && activeRun === "adhoc" ? "Fetching…" : "Fetch now"}
           </button>
-          <button className="btn btn-ghost" disabled={syncStatus.running} onClick={handleSave}>
+          <button
+            className="btn btn-ghost"
+            disabled={syncStatus.running || savedSearchesUnavailable}
+            title={savedSearchesUnavailable ? "Saved searches aren't available on this deploy target yet." : undefined}
+            onClick={handleSave}
+          >
             Save search
           </button>
         </div>

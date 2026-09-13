@@ -419,6 +419,17 @@ app.get("/api/stats", (req, res) => {
   res.json(getStats(getDb(DEFAULT_DB_PATH)));
 });
 
+// Alias for /api/stats and /api/tags (below) — the client calls these under
+// /api/meta/* because the Vercel deploy merges them into one function
+// (api/meta/[key].js) to fit the Hobby plan's function-count budget. Express
+// has no such constraint, so both old and new paths work here.
+app.get("/api/meta/:key", (req, res) => {
+  const db = getDb(DEFAULT_DB_PATH);
+  if (req.params.key === "stats") return res.json(getStats(db));
+  if (req.params.key === "tags") return res.json(getTags(db));
+  res.status(404).json({ error: "Not found" });
+});
+
 app.get("/api/markets", (req, res) => {
   const { search, status, sortBy, minVolume, minPrice, maxPrice, tag, page, pageSize } = req.query;
   const result = queryMarkets(getDb(DEFAULT_DB_PATH), {
