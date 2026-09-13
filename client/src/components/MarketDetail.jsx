@@ -275,9 +275,7 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
       setLastSavedTrade(trade);
       setTradeFormOpen(false);
     } catch (err) {
-      setTradeError(
-        err.status === 404 ? "Trade tracking isn't available on this deploy target yet." : err.message
-      );
+      setTradeError(err.message);
     } finally {
       setSavingTrade(false);
     }

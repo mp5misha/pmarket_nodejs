@@ -29,12 +29,6 @@ export const api = {
   // /api/stats on Express — both routes exist on Express so this URL works
   // either way.
   stats: () => req(`${BASE}/meta/stats`).then(handle),
-  markets: (params = {}) => {
-    const qs = new URLSearchParams(
-      Object.entries(params).filter(([, v]) => v !== undefined && v !== "" && v !== null)
-    ).toString();
-    return req(`${BASE}/markets${qs ? `?${qs}` : ""}`).then(handle);
-  },
   market: (slug) => req(`${BASE}/markets/${encodeURIComponent(slug)}`).then(handle),
   // Same filters as markets(), but grouped by Polymarket event and paginated
   // over groups instead of raw rows — powers <MarketGrid>.
@@ -152,46 +146,6 @@ export const api = {
       body: JSON.stringify(params),
     }).then(handle),
 
-  // Market Discovery (Phase 2): saved search configurations and an audit
-  // trail of catalog fetches. Not available on the frozen Vercel deploy
-  // yet — callers should treat rejection as "feature unavailable here"
-  // rather than a hard failure.
-  listSavedSearches: () => req(`${BASE}/saved-searches`).then(handle),
-  createSavedSearch: (params) =>
-    req(`${BASE}/saved-searches`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params),
-    }).then(handle),
-  updateSavedSearch: (id, params) =>
-    req(`${BASE}/saved-searches/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params),
-    }).then(handle),
-  deleteSavedSearch: (id) =>
-    req(`${BASE}/saved-searches/${id}`, { method: "DELETE" }).then((res) => {
-      if (!res.ok) throw new Error(`Request failed (${res.status})`);
-    }),
-  listFetchRuns: (params = {}) => {
-    const qs = new URLSearchParams(
-      Object.entries(params).filter(([, v]) => v !== undefined && v !== "" && v !== null)
-    ).toString();
-    return req(`${BASE}/fetch-runs${qs ? `?${qs}` : ""}`).then(handle);
-  },
-  createFetchRun: (params) =>
-    req(`${BASE}/fetch-runs`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params),
-    }).then(handle),
-  completeFetchRun: (id, params) =>
-    req(`${BASE}/fetch-runs/${id}/complete`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(params),
-    }).then(handle),
-
   // Highlight threshold (Phase 5) — markets with implied Yes probability at
   // or above this percentage are highlighted in the grid.
   getHighlightThreshold: () => req(`${BASE}/settings/highlight-threshold`).then(handle),
@@ -216,15 +170,21 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
     }).then(handle),
+  // Query-param id/action (rather than /trades/:id, /trades/analytics, ...)
+  // because the Vercel deploy's mirror of this endpoint (api/trades.js) is a
+  // single flat file with no dynamic path segment to capture a literal
+  // sub-path — see README's "Function count" section. Express answers the
+  // same query-param requests (see server/src/index.js's /api/trades
+  // routes) alongside its own path-based ones.
   deleteTrade: (id) =>
-    req(`${BASE}/trades/${id}`, { method: "DELETE" }).then((res) => {
+    req(`${BASE}/trades?id=${encodeURIComponent(id)}`, { method: "DELETE" }).then((res) => {
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
     }),
-  checkTradeResolutions: () => req(`${BASE}/trades/check-resolutions`, { method: "POST" }).then(handle),
+  checkTradeResolutions: () => req(`${BASE}/trades?action=check-resolutions`, { method: "POST" }).then(handle),
   // Profitability tracking (Phase 9) — aggregate metrics + chart data over
   // every resolved trade.
-  getTradeAnalytics: () => req(`${BASE}/trades/analytics`).then(handle),
-  tradesExportUrl: () => `${BASE}/trades/export`,
+  getTradeAnalytics: () => req(`${BASE}/trades?action=analytics`).then(handle),
+  tradesExportUrl: () => `${BASE}/trades?action=export`,
 
   // Bet-sizing configuration (Phase 6) — Kelly fraction, flat stake, fixed
   // percentage. The response's `bankrollAmount` is the live bankroll

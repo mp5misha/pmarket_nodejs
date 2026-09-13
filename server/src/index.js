@@ -795,12 +795,56 @@ app.post("/api/settings/bet-sizing", requireAuth, (req, res) => {
 });
 
 // Phase 5: manually-recorded trades and their automatic resolution.
+//
+// GET /api/trades also answers ?action=analytics and ?action=export (kept
+// on this same route+method, alongside the dedicated /api/trades/analytics
+// and /api/trades/export routes below) because the Vercel deploy's mirror
+// of this endpoint (api/trades.js) is a single flat file with no dynamic
+// path segment to capture a literal sub-path — see README's "Function
+// count" section. Same reasoning for ?action=check-resolutions on POST
+// /api/trades below, and the query-param DELETE /api/trades route further
+// down (alongside the existing DELETE /api/trades/:id).
 app.get("/api/trades", requireAuth, (req, res) => {
+  if (req.query.action === "analytics") {
+    return res.json(getProfitabilityAnalytics(getDb(DEFAULT_DB_PATH), req.userId));
+  }
+  if (req.query.action === "export") {
+    const rows = listTrades(getDb(DEFAULT_DB_PATH), { userId: req.userId });
+    if (!rows.length) return res.status(404).send("No trades to export yet");
+    const cols = Object.keys(rows[0]).filter((c) => c !== "user_id");
+    const escape = (v) => {
+      if (v === null || v === undefined) return "";
+      const s = String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [cols.join(",")];
+    for (const r of rows) lines.push(cols.map((c) => escape(r[c])).join(","));
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", "attachment; filename=trades.csv");
+    return res.send(lines.join("\n"));
+  }
   const { status, marketSlug } = req.query;
   res.json(listTrades(getDb(DEFAULT_DB_PATH), { status, marketSlug, userId: req.userId }));
 });
 
-app.post("/api/trades", requireAuth, (req, res) => {
+app.delete("/api/trades", requireAuth, (req, res) => {
+  const db = getDb(DEFAULT_DB_PATH);
+  const existing = getTrade(db, req.userId, req.query.id);
+  if (!existing) return res.status(404).json({ error: "Trade not found" });
+  deleteLedgerEntriesForTrade(db, req.query.id);
+  deleteTrade(db, req.userId, req.query.id);
+  res.status(204).end();
+});
+
+app.post("/api/trades", requireAuth, async (req, res) => {
+  if (req.query.action === "check-resolutions") {
+    try {
+      const result = await checkTradeResolutions();
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(500).json({ error: String(err.message ?? err) });
+    }
+  }
   const { marketSlug, side, entryPrice, stake, placedAt, note, estimatedProb } = req.body || {};
   if (!marketSlug || !["yes", "no"].includes(side)) {
     return res.status(400).json({ error: "marketSlug and side ('yes' or 'no') are required" });

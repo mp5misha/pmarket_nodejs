@@ -34,24 +34,25 @@ the way the old click-and-wait sync did.
 
 **This deploy has no login** — it's frozen at the pre-Phase-8 feature set,
 so there are no accounts and every visitor shares one global dataset.
-AI analysis with a persisted history and follow-up questions *is*
-implemented here (Postgres-backed, mirroring `server/`'s `ai_analysis`
-table minus per-user scoping) — what's missing is Market Discovery (saved
-searches, fetch-run auditing), trade tracking/bankroll/profitability, and
-Phase 4's reusable prompt templates, which only exist on `server/` (see
-**Function count** below for why: there isn't Hobby-plan budget left for
-them on top of everything else). Market Discovery's ad hoc "Fetch now"
-still works here (it's a plain sync, not a saved-search feature) — see
-**How sync works on Vercel** below. The shared client detects a backend
-with no `/api/auth/*` routes and skips the login screen entirely rather
-than showing one with nowhere for it to lead. For full parity, deploy
-`server/` instead (see the two options below).
+AI analysis with a persisted history and follow-up questions, and trade
+tracking with profitability analytics, *are* implemented here (Postgres-
+backed, mirroring `server/`'s tables minus per-user scoping and, for
+trades, minus the bankroll ledger/auto-deduct, which stays Phase 7's
+Express/SQLite-only territory). What's still missing here is Phase 4's
+reusable prompt templates (Settings falls back to the old single-prompt
+editor) and Phase 6's bet-sizing calculator — both Express/SQLite only. The
+Market Discovery screen this paragraph used to mention here is gone from
+*both* backends now — see **Using it** below. The shared client
+detects a backend with no `/api/auth/*` routes and skips the login screen
+entirely rather than showing one with nowhere for it to lead. For full
+parity (accounts, bankroll, prompt templates), deploy `server/` instead
+(see the two options below).
 
 **Function count:** the Hobby plan caps a deployment at 12 serverless
 functions; `api/**/*.js` is deliberately kept at exactly that limit. A
 dynamic route file (e.g. `api/settings/[key].js`) counts once regardless of
-how many values that segment matches, which is how a couple of logically-
-separate endpoints share one physical file: `api/settings/[key].js` serves
+how many values that segment matches, which is how a few logically-separate
+endpoints share one physical file: `api/settings/[key].js` serves
 `deepseek-key` and `deepseek-prompt`; `api/meta/[key].js` serves `stats` and
 `tags`. **Only single dynamic segments are used for this** (`[key].js`, or
 a `[slug]/` folder containing plain static filenames like
@@ -60,10 +61,24 @@ a `[slug]/` folder containing plain static filenames like
 `api/markets/[slug]/*` into one `[[...action]].js` catch-all file to save
 function budget; catch-all routing is unreliable in a plain (non-Next.js)
 Vercel deployment like this one and it broke market details in production.
-Don't reintroduce it — if you need more budget than single-segment
-consolidation can free up, either drop a route/feature or move to a Pro
-plan (100-function limit), and test any file-count change against a real
-Vercel deployment before relying on it, not just locally.
+Don't reintroduce it.
+
+`api/trades.js` uses a different trick: it's a single flat file with no
+dynamic segment at all — GET/POST `/api/trades` handle list/create, and
+delete/check-resolutions/analytics/export are dispatched via `?id=`/
+`?action=` query params instead of `/trades/:id`-style sub-paths. Express
+answers the same query-param requests (`server/src/index.js`) alongside its
+own pre-existing path-based routes, so both deploy targets work off the
+same `client/src/api.js` URLs. `api/markets/index.js` (a flat, ungrouped
+market list) was deleted outright rather than merged — nothing in the
+client ever called it, `groupedMarkets`/`refreshMarkets` being the only
+consumers of `/api/markets/*`, so it was dead weight before the budget
+ever came into it.
+
+If you need more budget than these tricks free up, either drop a route/
+feature or move to a Pro plan (100-function limit), and test any file-count
+or routing change against a real Vercel deployment before relying on it,
+not just locally.
 
 **1. Provision a free Postgres database (Neon, via Vercel's own integration):**
 - In your Vercel project → **Storage** tab → **Create Database** → **Neon**
@@ -266,9 +281,12 @@ everything that account owns to you; it's safe to click more than once
   (needed for the min/max columns and the chart — it's slower, one extra API
   call per market, with an editable delay between those calls to stay easy on
   Polymarket's API). Click **Run sync** and a progress bar tracks it live.
-- **Market grid** — search by keyword, filter by status, filter by minimum
-  volume, filter by price range (min/max current Yes price), and filter by
-  category/tag (populated from whatever's been synced). Markets that share a
+- **Market grid** — search by keyword, filter by status (**All statuses** /
+  **Active** / **Resolved**, applied server-side via `GET /api/markets/
+  grouped`'s `status` param rather than filtering only what's already on the
+  page), filter by minimum volume, filter by price range (min/max current
+  Yes price), and filter by category/tag (populated from whatever's been
+  synced). Markets that share a
   Polymarket event (e.g. each candidate in an election) are grouped under one
   event header row instead of appearing as unrelated rows; a market with no
   event is its own single-row group. Each row shows Yes price, No price, and
@@ -297,7 +315,7 @@ everything that account owns to you; it's safe to click more than once
   (see below).
 - **Export CSV** in the sidebar downloads everything currently stored.
 
-## Trades and P&L (Express/SQLite only)
+## Trades and P&L
 
 Click **Mark as traded** on a market's detail panel to record a manual
 trade: side (Yes/No, pre-filling that side's current price as the entry
@@ -305,19 +323,15 @@ price — editable), stake, and an optional note. The **My Trades** tab lists
 every recorded trade with tabs for All/Open/Won/Lost, a running net P&L
 total, and a **Check resolutions now** button.
 
-Trades resolve automatically: an in-process check (same interval approach
-as Market Discovery's scheduled reruns) runs every 60 seconds, refreshes
-the price/closed status of any market with an open trade, and — once that
-market is closed and its Yes price has settled to (near) 0 or 1, matching
-how Polymarket represents a final outcome — marks each open trade **Won**
-or **Lost** based on which side actually won. **Check resolutions now**
-runs the same check immediately instead of waiting for the next tick.
-
-This is Express/SQLite only — the frozen Vercel deploy has no `/api/trades`
-route at all (no Hobby-plan function budget left for it — see **Function
-count** above), so **Mark as traded** and the **My Trades** tab show "Trade
-tracking isn't available on this deploy target yet." there instead of
-erroring out.
+A trade's resolution check — refreshing the price/closed status of any
+market with an open trade, and once that market is closed and its Yes price
+has settled to (near) 0 or 1, matching how Polymarket represents a final
+outcome, marking each open trade **Won** or **Lost** based on which side
+actually won — is the same on both backends; the difference is what
+triggers it. The Express/SQLite backend also runs it automatically every 60
+seconds (an in-process check); the frozen Vercel deploy has no background
+timer, so **Check resolutions now** (which runs the identical check
+immediately, on both backends) is the only way to resolve a trade there.
 
 P&L uses the same buy-side formula as the profitability tracking in a later
 section: for a stake `s` at entry price `p`, `payout = s / p` if the trade's
@@ -374,10 +388,12 @@ The bankroll balance is always `startingAmount + sum(all ledger entries)`,
 computed fresh on every read rather than stored as its own number, so it
 can never drift out of sync with the ledger.
 
-### Profitability tracking (Express/SQLite only)
+### Profitability tracking
 
 Once you have at least one resolved (won/lost) trade, **My Trades** shows a
-**Profitability** section below the bankroll dashboard:
+**Profitability** section below the bankroll dashboard (on the frozen
+Vercel deploy, which has no bankroll dashboard — see **Bankroll** above —
+this section appears on its own instead):
 
 - **ROI** — total profit ÷ total staked, across every resolved trade.
 - **Win rate** — won ÷ (won + lost).
@@ -404,43 +420,15 @@ estimates are well-calibrated.
 with entry price, stake, estimated probability, payout, profit, and
 timestamps.
 
-## Market Discovery (Express/SQLite only)
-
-The **Market Discovery** tab (next to **All Markets**) is a configurable
-screen for building and reusing catalog-fetch filters, separate from the
-sidebar's quick "Run sync":
-
-- **Filters** — status (active/resolved/all), category/tag, a resolution
-  date range, minimum volume, minimum liquidity, and a keyword match against
-  the market question. These apply at fetch time (skipping non-matching
-  markets before they're upserted), not as a display-only filter.
-- **Save search** — name the current filter combination and click **Save
-  search** to keep it for reuse; it appears in the **Saved searches** table
-  below with **Run** (fetch now, using that search's filters) and **Delete**.
-- **Fetch now** — runs the current filters immediately without saving them,
-  the same idempotent upsert used everywhere else (existing markets are
-  updated in place by slug; new ones are inserted — nothing is duplicated on
-  a rerun).
-- **Scheduled reruns (optional)** — set "Auto re-run every N minutes" when
-  saving a search to have the server itself rerun it on that interval, via
-  an in-process scheduler (checked once a minute) — no separate job queue.
-  Leave it blank for manual-only. This only runs while the server process
-  stays up; there's no persistent external cron.
-- **Fetch run history** — every fetch (ad hoc, saved-search, or scheduled)
-  is recorded with its start time, status, filters, and how many markets
-  were added vs. updated, shown in the **Recent fetch runs** table.
-
-This tab, saved searches, and fetch-run auditing are **only implemented on
-the Express/SQLite backend** — they call `/api/saved-searches` and
-`/api/fetch-runs`, which don't exist on the frozen Vercel/Postgres deploy
-(no Hobby-plan function budget left for them — see **Function count**
-above). The screen degrades gracefully there (shows "not available on this
-deploy target" and disables **Save search**) rather than erroring out.
-**Fetch now itself still works on Vercel** (it's `api/sync/step.js`, not a
-saved-search feature) — its own summary line ("Fetched N market(s): X
-added, Y updated") is what confirms a fetch worked there, since the
-**Recent fetch runs** audit table always reads empty on that deploy target
-regardless of whether a fetch actually ran.
+There used to be a separate **Market Discovery** tab next to **All
+Markets** (filter-configuration presets you could name, save, and re-run,
+plus an audit trail of past fetches) layered on top of the market grid's
+own filters above. It's been removed from the client — the underlying
+saved-search/fetch-run tables, routes, and the scheduled-rerun poller still
+exist on `server/` (Express/SQLite), just with no UI in front of them;
+`/api/saved-searches` and `/api/fetch-runs` still respond there for anyone
+calling them directly. The sidebar's **Run sync** (ad hoc, unsaved) still
+works exactly as before on both backends.
 
 ## AI analysis (DeepSeek)
 

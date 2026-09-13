@@ -4,7 +4,6 @@ import Sidebar from "./components/Sidebar.jsx";
 import MarketGrid from "./components/MarketGrid.jsx";
 import MarketDetail from "./components/MarketDetail.jsx";
 import SettingsModal from "./components/SettingsModal.jsx";
-import MarketDiscovery from "./components/MarketDiscovery.jsx";
 import MyTrades from "./components/MyTrades.jsx";
 import AuthScreen, { VerifyEmailLanding, ResetPasswordLanding } from "./components/AuthScreen.jsx";
 import { useMarketGroups } from "./hooks/useMarketGroups.js";
@@ -247,8 +246,7 @@ function MainApp({ user, onLogout }) {
   };
 
   // Thin wrapper around useCatalogFetch's run() for the sidebar's "Run
-  // sync" button — same audited-fetch-run path the Market Discovery screen
-  // uses (Phase 2), just without a saved search behind it.
+  // sync" button.
   const startSync = async (params) => {
     try {
       await runCatalogFetch(params);
@@ -283,12 +281,6 @@ function MainApp({ user, onLogout }) {
             All Markets
           </button>
           <button
-            className={`view-tab ${view === "discovery" ? "active" : ""}`}
-            onClick={() => setView("discovery")}
-          >
-            Market Discovery
-          </button>
-          <button
             className={`view-tab ${view === "trades" ? "active" : ""}`}
             onClick={() => setView("trades")}
           >
@@ -296,9 +288,7 @@ function MainApp({ user, onLogout }) {
           </button>
         </div>
 
-        {view === "discovery" ? (
-          <MarketDiscovery tags={tags} />
-        ) : view === "trades" ? (
+        {view === "trades" ? (
           <MyTrades />
         ) : (
           <>
@@ -314,7 +304,7 @@ function MainApp({ user, onLogout }) {
               <select value={status} onChange={(e) => setStatus(e.target.value)}>
                 <option value="">All statuses</option>
                 <option value="active">Active</option>
-                <option value="closed">Closed</option>
+                <option value="closed">Resolved</option>
               </select>
               <input
                 type="number"
