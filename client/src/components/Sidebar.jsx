@@ -146,7 +146,6 @@ export default function Sidebar({
             max={5}
             value={delay}
             onChange={(e) => setDelay(Number(e.target.value))}
-            disabled={!history}
           />
         </div>
 

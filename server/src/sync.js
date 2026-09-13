@@ -1,4 +1,4 @@
-import { getDb, upsertMarket, getMarket } from "./db.js";
+import { getDb, upsertMarket, getMarket, getSyncCursor, setSyncCursor } from "./db.js";
 import {
   fetchMarketsPage,
   fetchMarketBySlug,
@@ -6,6 +6,7 @@ import {
   normalizeMarket,
   resolveStatusFilter,
   inResolutionRange,
+  syncFilterSignature,
 } from "./polymarket.js";
 
 const REFRESH_CONCURRENCY = 4;
@@ -17,9 +18,20 @@ const REFRESH_CONCURRENCY = 4;
 // `minVolume`/`minLiquidity`/`keyword` are Market Discovery's fetch-time
 // filters (Phase 2) — markets below/not matching are skipped before upsert,
 // same pattern as the existing tag/resolution-date filters.
+//
+// A fresh run always starts at offset 0 (the client's initial value) — but
+// Gamma's ranking for a given sort order is fairly stable run to run, so
+// starting from 0 every time would mean re-fetching the same top-of-list
+// markets indefinitely rather than ever reaching new ones. When offset is 0,
+// substitute the persisted cursor for this exact filter combination instead
+// (see syncFilterSignature/getSyncCursor) — the caller just keeps following
+// whatever `nextOffset` this returns. Once Gamma runs out of markets for
+// this filter (a short page), the cursor resets to 0 so the next run sweeps
+// from the top again.
 export async function runSyncStep({
   dbPath,
-  offset = 0,
+  userId,
+  offset: requestedOffset = 0,
   batchSize = 50,
   status = "active",
   history = false,
@@ -32,6 +44,8 @@ export async function runSyncStep({
   keyword = "",
 }) {
   const db = getDb(dbPath);
+  const signature = syncFilterSignature({ status, tag, resolutionFrom, resolutionTo, minVolume, minLiquidity, keyword });
+  const offset = requestedOffset || getSyncCursor(db, userId, signature);
   const { active, closed } = resolveStatusFilter(status);
   const page = await fetchMarketsPage(offset, { limit: batchSize, active, closed });
 
@@ -69,26 +83,27 @@ export async function runSyncStep({
     else updated += 1;
   }
 
-  return {
-    processed,
-    added,
-    updated,
-    nextOffset: offset + page.length,
-    done: page.length < batchSize,
-  };
+  const nextOffset = offset + page.length;
+  const done = page.length < batchSize;
+  // done=true means Gamma itself ran out of markets for this filter (not
+  // just that the caller's own "max markets" cap was reached) — a real end
+  // of the catalog, so start over from the top next time.
+  setSyncCursor(db, userId, signature, done ? 0 : nextOffset);
+
+  return { processed, added, updated, nextOffset, done };
 }
 
 // Loops runSyncStep to completion server-side (no browser involved) — used
 // by the in-process scheduler for a saved search's optional scheduled
 // reruns (Phase 2), as opposed to the client-driven step-by-step loop in
 // client/src/hooks/useCatalogFetch.js.
-export async function runFullSync({ dbPath, limit = 2000, ...filters }) {
+export async function runFullSync({ dbPath, userId, limit = 2000, ...filters }) {
   let offset = 0;
   let processed = 0;
   let added = 0;
   let updated = 0;
   for (;;) {
-    const step = await runSyncStep({ dbPath, offset, batchSize: 100, ...filters });
+    const step = await runSyncStep({ dbPath, userId, offset, batchSize: 100, ...filters });
     processed += step.processed;
     added += step.added;
     updated += step.updated;

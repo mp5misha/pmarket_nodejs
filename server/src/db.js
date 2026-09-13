@@ -484,6 +484,42 @@ export function deleteSetting(db, userId, key) {
   db.prepare("DELETE FROM user_settings WHERE user_id = ? AND key = ?").run(userId, key);
 }
 
+const SYNC_CURSOR_SETTING = "sync_cursors";
+
+/** Where a catalog sync left off for a given filter combination (see
+ * server/src/polymarket.js's syncFilterSignature) — lets a fresh "Run
+ * sync"/"Fetch now" continue into markets it hasn't seen yet instead of
+ * re-fetching the same top-of-list results every time (Gamma's ranking is
+ * fairly stable run to run for a given sort order). Stored as one JSON blob
+ * mapping signature -> offset rather than one settings row per signature,
+ * since there are only ever a handful of distinct filter combos in
+ * practice; per-user like every other setting here, even though the
+ * underlying markets catalog itself is shared. */
+export function getSyncCursor(db, userId, signature) {
+  const raw = getSetting(db, userId, SYNC_CURSOR_SETTING);
+  if (!raw) return 0;
+  try {
+    return JSON.parse(raw)[signature] ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function setSyncCursor(db, userId, signature, offset) {
+  const raw = getSetting(db, userId, SYNC_CURSOR_SETTING);
+  let cursors = {};
+  if (raw) {
+    try {
+      cursors = JSON.parse(raw);
+    } catch {
+      cursors = {};
+    }
+  }
+  if (offset > 0) cursors[signature] = offset;
+  else delete cursors[signature];
+  setSetting(db, userId, SYNC_CURSOR_SETTING, JSON.stringify(cursors));
+}
+
 /** Named, re-runnable Market Discovery filter configurations (Phase 2). */
 export function listSavedSearches(db, userId) {
   return db.prepare("SELECT * FROM saved_searches WHERE user_id = ? ORDER BY created_at DESC").all(userId);

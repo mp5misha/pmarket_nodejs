@@ -120,7 +120,11 @@ history — one extra HTTP call per market), advancing an offset each time,
 until the server reports no markets left or you've hit your requested
 limit. The progress bar in the sidebar reflects this loop directly. This
 same endpoint shape now also exists on the Express server
-(`server/src/index.js`), so the client behaves identically either way.
+(`server/src/index.js`), so the client behaves identically either way. The
+client always starts this loop at offset 0, same as before — what changed
+is what the *server* does with that: it resumes from a persisted per-filter
+cursor instead of taking 0 literally, so consecutive syncs reach new
+markets instead of looping over the same ones (see **Using it** above).
 
 ### Split deploy instead: client on Vercel + API on Render/Railway
 
@@ -291,9 +295,22 @@ everything that account owns to you; it's safe to click more than once
   to scope the sync to (populated from whatever's already been synced); a
   resolution date range to only sync markets resolving in that window; and
   whether to also fetch price history (needed for the min/max columns and
-  the chart — it's slower, one extra API call per market, with an editable
-  delay between those calls to stay easy on Polymarket's API). Click **Run
-  sync** and a progress bar tracks it live.
+  the chart — it's slower, one extra API call per market, with a **Delay
+  between history calls** field you can set at any time, whether or not that
+  checkbox is on). Click **Run sync** and a progress bar tracks it live.
+
+  Each "Run sync"/"Fetch now" for a given combination of filters resumes
+  where the *previous* one for that exact combination left off, rather than
+  starting from the top of Polymarket's list every time — Gamma's ranking
+  for a given sort order is fairly stable run to run, so always starting
+  from offset 0 would mean re-fetching the same top-of-list markets
+  indefinitely instead of ever reaching newer or lower-ranked ones. Once a
+  sync for a filter combination reaches the actual end of Polymarket's
+  catalog (not just your own "max markets to fetch" cap), it wraps back to
+  the start next time. This cursor lives server-side (`sync_cursors` in
+  `settings`/`user_settings`, keyed by the filter combination — see
+  `syncFilterSignature` in `lib/polymarket.js`/`server/src/polymarket.js`),
+  so it persists across page reloads and (on Express) is scoped per account.
 - **Market grid** — search by keyword, filter by status (**All statuses** /
   **Active** / **Resolved**, applied server-side via `GET /api/markets/
   grouped`'s `status` param rather than filtering only what's already on the

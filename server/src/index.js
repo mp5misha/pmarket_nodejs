@@ -1114,6 +1114,7 @@ app.post("/api/sync/step", requireAuth, async (req, res) => {
     } = req.body || {};
     const result = await runSyncStep({
       dbPath: DEFAULT_DB_PATH,
+      userId: req.userId,
       offset,
       batchSize,
       status,
@@ -1231,7 +1232,7 @@ async function runDueScheduledSearches() {
     };
     const runId = createFetchRun(db, s.user_id, { savedSearchId: s.id, filters });
     try {
-      const result = await runFullSync({ dbPath: DEFAULT_DB_PATH, ...filters });
+      const result = await runFullSync({ dbPath: DEFAULT_DB_PATH, userId: s.user_id, ...filters });
       completeFetchRun(db, runId, {
         marketsAdded: result.added,
         marketsUpdated: result.updated,
