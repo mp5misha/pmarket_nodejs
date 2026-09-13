@@ -146,6 +146,17 @@ function requireAuth(req, res, next) {
   next();
 }
 
+/** Same session lookup as requireAuth, but never blocks the request — for
+ * the public markets routes below, which need the current user's id (to
+ * scope the "AI analysis results" column's per-user ai_analysis lookup)
+ * without actually requiring login on an otherwise-public endpoint. */
+function getOptionalUserId(req) {
+  const token = req.cookies?.[SESSION_COOKIE];
+  if (!token) return undefined;
+  const session = getSessionByTokenHash(getDb(DEFAULT_DB_PATH), hashToken(token));
+  return session?.user_id;
+}
+
 async function issueSession(res, userId) {
   const token = generateToken();
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
@@ -459,6 +470,7 @@ app.get("/api/markets", (req, res) => {
     tag: tag || undefined,
     page: page ? Number(page) : 1,
     pageSize: pageSize ? Number(pageSize) : 50,
+    userId: getOptionalUserId(req),
   });
   res.json(result);
 });
@@ -479,6 +491,7 @@ app.get("/api/markets/grouped", (req, res) => {
     tag: tag || undefined,
     page: page ? Number(page) : 1,
     pageSize: pageSize ? Number(pageSize) : 25,
+    userId: getOptionalUserId(req),
   });
   res.json(result);
 });

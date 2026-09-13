@@ -312,14 +312,22 @@ everything that account owns to you; it's safe to click more than once
   doesn't currently fetch live order-book best bid/ask, only Gamma's last
   traded price). Sort by volume, liquidity, implied probability, event date,
   or resolved-first, and paginate (10/25/50/100 rows per page — a "page" is a
-  page of event groups, not raw market rows). An auto-refresh interval
-  (off/15s/30s/1m/5m) re-polls what's stored in the database — it does not
-  itself hit Polymarket on a timer; use **Run sync** or **Update selected
-  prices** to actually pull fresh data. A resolved market shows a "Resolved"
-  badge instead of a last-updated time. A **Highlight ≥ N%** field (Express/
-  SQLite only) tints any row whose implied Yes probability is at or above
-  that percentage — the value is saved server-side and persists across
-  restarts. Click any row to open its detail panel below.
+  page of event groups, not raw market rows). An **AI analysis results**
+  column shows a preview of that market's most recent DeepSeek analysis or
+  follow-up reply (whichever is newer — a follow-up is just another row in
+  the same analysis history, so this always reflects the latest word on a
+  market you've asked about more than once), truncated to two lines with the
+  full text on hover; "—" if you haven't analyzed that market yet. The
+  **Updated** column shows the full local date and time
+  (`YYYY/MM/DD, HH:MM`) the row was last synced or refreshed. An auto-
+  refresh interval (off/15s/30s/1m/5m) re-polls what's stored in the
+  database — it does not itself hit Polymarket on a timer; use **Run sync**
+  or **Update selected prices** to actually pull fresh data. A resolved
+  market shows a "Resolved" badge in the Updated column instead of a
+  timestamp. A **Highlight ≥ N%** field (Express/SQLite only) tints any row
+  whose implied Yes probability is at or above that percentage — the value
+  is saved server-side and persists across restarts. Click any row to open
+  its detail panel below.
 - **Bulk actions** — check one or more rows (the header checkbox selects/
   clears every row on the current page), then either **Update selected
   prices** (re-fetches just those markets' current price, volume, and

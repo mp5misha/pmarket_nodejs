@@ -25,6 +25,30 @@ function fmtTime(v) {
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleTimeString();
 }
 
+// "YYYY/MM/DD, HH:MM" in the viewer's local timezone (not toLocaleString(),
+// which varies by locale/browser) — used by the grid's own "Updated" column
+// so a market's last-synced time is unambiguous at a glance.
+function fmtDateTime(v) {
+  if (!v) return "—";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return String(v);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+const ANALYSIS_PREVIEW_LENGTH = 140;
+
+// The most recent analysis or follow-up result for a market (whichever is
+// newer — a follow-up is just another row in the same table), truncated
+// for the grid cell; hovering shows the full text via the `title` attribute.
+function fmtAnalysisPreview(text) {
+  if (!text) return null;
+  const trimmed = text.trim();
+  return trimmed.length > ANALYSIS_PREVIEW_LENGTH
+    ? `${trimmed.slice(0, ANALYSIS_PREVIEW_LENGTH).trimEnd()}…`
+    : trimmed;
+}
+
 function parseTags(raw) {
   if (!raw) return [];
   try {
@@ -80,8 +104,20 @@ function MarketRow({ market, isNested, selectedSlug, onSelectMarket, selectedSlu
       <td className="num">{fmtMoney(market.volume)}</td>
       <td className="num">{fmtMoney(market.liquidity)}</td>
       <td>{fmtDate(market.resolution_date)}</td>
+      <td
+        className="analysis-cell"
+        title={
+          market.last_analysis_text
+            ? `${market.last_analysis_text}${
+                market.last_analysis_at ? `\n\n(as of ${fmtDateTime(market.last_analysis_at)})` : ""
+              }`
+            : undefined
+        }
+      >
+        {fmtAnalysisPreview(market.last_analysis_text) || "—"}
+      </td>
       <td className="updated-cell">
-        {market.closed ? <span className="resolved-badge">Resolved</span> : fmtTime(market.last_updated)}
+        {market.closed ? <span className="resolved-badge">Resolved</span> : fmtDateTime(market.last_updated)}
       </td>
     </tr>
   );
@@ -94,7 +130,7 @@ function GroupRows({ group, ...rowProps }) {
       {isMultiMarket && (
         <tr className="event-header-row">
           <td />
-          <td colSpan={7} className="event-header-cell">
+          <td colSpan={8} className="event-header-cell">
             {group.eventTitle}
             <span className="event-count"> · {group.markets.length} markets</span>
           </td>
@@ -223,6 +259,7 @@ export default function MarketGrid({
               <th className="num">Volume</th>
               <th className="num">Liquidity</th>
               <th>Resolves</th>
+              <th>AI analysis results</th>
               <th>Updated</th>
             </tr>
           </thead>

@@ -3,7 +3,16 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { getDb, upsertMarket, getMarket, getStats, deleteMarkets, queryMarketsGrouped } from "../src/db.js";
+import {
+  getDb,
+  upsertMarket,
+  getMarket,
+  getStats,
+  deleteMarkets,
+  queryMarketsGrouped,
+  createAnalysis,
+  createUser,
+} from "../src/db.js";
 
 const dbPath = path.join(os.tmpdir(), `upsert-test-${Date.now()}-${process.pid}.db`);
 let db;
@@ -144,4 +153,42 @@ test("status filter treats a past resolution_date as resolved even when closed i
   assert.ok(activeSlugs.includes("truly-active"));
   assert.ok(resolvedSlugs.includes("stale-resolved"));
   assert.ok(!resolvedSlugs.includes("truly-active"));
+});
+
+test("queryMarketsGrouped surfaces each market's newest analysis (including follow-ups), scoped per user", () => {
+  const owner = createUser(db, { email: "grid-analysis-owner@example.com", passwordHash: "x" });
+  const otherUser = createUser(db, { email: "grid-analysis-other@example.com", passwordHash: "x" });
+
+  upsertMarket(db, { slug: "grid-with-analysis", question: "Q1", currentPrice: 0.5, noPrice: 0.5, active: true, closed: false });
+  upsertMarket(db, { slug: "grid-without-analysis", question: "Q2", currentPrice: 0.5, noPrice: 0.5, active: true, closed: false });
+
+  createAnalysis(db, owner.id, {
+    marketSlug: "grid-with-analysis",
+    promptText: "p1",
+    inputHash: "gh1",
+    modelName: "m",
+    resultText: "Original analysis",
+  });
+  createAnalysis(db, owner.id, {
+    marketSlug: "grid-with-analysis",
+    promptText: "p2",
+    inputHash: "gh2",
+    modelName: "m",
+    resultText: "Follow-up final verdict",
+  });
+  // Another user's analysis on the *other* market must not leak into owner's view.
+  createAnalysis(db, otherUser.id, {
+    marketSlug: "grid-without-analysis",
+    promptText: "p3",
+    inputHash: "gh3",
+    modelName: "m",
+    resultText: "Not this user's",
+  });
+
+  const rows = queryMarketsGrouped(db, { userId: owner.id }).groups.flatMap((g) => g.markets);
+  const withAnalysis = rows.find((m) => m.slug === "grid-with-analysis");
+  const withoutAnalysis = rows.find((m) => m.slug === "grid-without-analysis");
+
+  assert.equal(withAnalysis.last_analysis_text, "Follow-up final verdict");
+  assert.equal(withoutAnalysis.last_analysis_text, null);
 });

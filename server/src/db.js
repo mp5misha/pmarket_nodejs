@@ -140,6 +140,7 @@ export function queryMarkets(
     tag,
     page = 1,
     pageSize = 50,
+    userId,
   } = {}
 ) {
   const { clauses, params } = buildMarketFilters({ search, status, minVolume, minPrice, maxPrice, tag });
@@ -151,11 +152,24 @@ export function queryMarkets(
   const pageSizeSafe = Math.max(1, Math.min(500, pageSize));
   const pageSafe = Math.max(1, page);
   const offset = (pageSafe - 1) * pageSizeSafe;
-  const sql = `SELECT * FROM markets ${where} ORDER BY ${sortCol} DESC NULLS LAST LIMIT @pageSize OFFSET @offset`;
-  const rows = db.prepare(sql).all({ ...params, pageSize: pageSizeSafe, offset });
+  const sql = `SELECT markets.*, ${LATEST_ANALYSIS_SELECT}
+               FROM markets ${where} ORDER BY ${sortCol} DESC NULLS LAST LIMIT @pageSize OFFSET @offset`;
+  const rows = db.prepare(sql).all({ ...params, pageSize: pageSizeSafe, offset, userId });
 
   return { rows, total, page: pageSafe, pageSize: pageSizeSafe };
 }
+
+/** Correlated subqueries pulling in each market's most recent analysis (an
+ * original run or a follow-up, whichever is newer — a follow-up is just
+ * another row in the same table) for the grid's "AI analysis results"
+ * column. `ai_analysis` is scoped by user_id (unlike `markets`, shared
+ * across accounts), so this needs the caller's userId bound as @userId. */
+const LATEST_ANALYSIS_SELECT = `
+  (SELECT result_text FROM ai_analysis WHERE ai_analysis.market_slug = markets.slug AND ai_analysis.user_id = @userId
+     ORDER BY created_at DESC LIMIT 1) AS last_analysis_text,
+  (SELECT created_at FROM ai_analysis WHERE ai_analysis.market_slug = markets.slug AND ai_analysis.user_id = @userId
+     ORDER BY created_at DESC LIMIT 1) AS last_analysis_at
+`;
 
 /** Same filters as queryMarkets, but groups the matching markets by their
  * Polymarket event (a standalone market with no event is its own
@@ -166,14 +180,25 @@ export function queryMarkets(
  * and it keeps a group's sort position tied to its best-ranked market. */
 export function queryMarketsGrouped(
   db,
-  { search, status, sortBy = "volume", minVolume = 0, minPrice, maxPrice, tag, page = 1, pageSize = 25 } = {}
+  {
+    search,
+    status,
+    sortBy = "volume",
+    minVolume = 0,
+    minPrice,
+    maxPrice,
+    tag,
+    page = 1,
+    pageSize = 25,
+    userId,
+  } = {}
 ) {
   const { clauses, params } = buildMarketFilters({ search, status, minVolume, minPrice, maxPrice, tag });
   const sortCol = SORTABLE.has(sortBy) ? sortBy : "volume";
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const rows = db
-    .prepare(`SELECT * FROM markets ${where} ORDER BY ${sortCol} DESC NULLS LAST`)
-    .all(params);
+    .prepare(`SELECT markets.*, ${LATEST_ANALYSIS_SELECT} FROM markets ${where} ORDER BY ${sortCol} DESC NULLS LAST`)
+    .all({ ...params, userId });
 
   const groupOrder = [];
   const groupsByKey = new Map();
