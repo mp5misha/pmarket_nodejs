@@ -1,4 +1,4 @@
-import { getPool, ensureSchema, upsertMarket } from "../../lib/db.js";
+import { getPool, ensureSchema, upsertMarket, getMarket } from "../../lib/db.js";
 import {
   fetchMarketsPage,
   fetchPriceHistory,
@@ -29,17 +29,25 @@ export default async function handler(req, res) {
       tag = "",
       resolutionFrom = "",
       resolutionTo = "",
+      minVolume = 0,
+      minLiquidity = 0,
+      keyword = "",
     } = req.body || {};
 
     const { active, closed } = resolveStatusFilter(status);
     const page = await fetchMarketsPage(offset, { limit: batchSize, active, closed });
 
     let processed = 0;
+    let added = 0;
+    let updated = 0;
     for (const raw of page) {
       const m = normalizeMarket(raw);
       if (!m.slug) continue;
       if (tag && !m.tags.includes(tag)) continue;
       if (!inResolutionRange(m.resolutionDate, resolutionFrom, resolutionTo)) continue;
+      if (minVolume && (m.volume ?? 0) < minVolume) continue;
+      if (minLiquidity && (m.liquidity ?? 0) < minLiquidity) continue;
+      if (keyword && !(m.question ?? "").toLowerCase().includes(keyword.toLowerCase())) continue;
 
       let minPrice = null;
       let maxPrice = null;
@@ -56,12 +64,17 @@ export default async function handler(req, res) {
         }
       }
 
+      const isNew = !(await getMarket(pool, m.slug));
       await upsertMarket(pool, m, { minPrice, maxPrice });
       processed += 1;
+      if (isNew) added += 1;
+      else updated += 1;
     }
 
     res.status(200).json({
       processed,
+      added,
+      updated,
       nextOffset: offset + page.length,
       done: page.length < batchSize,
     });

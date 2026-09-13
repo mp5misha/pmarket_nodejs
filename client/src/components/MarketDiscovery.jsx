@@ -6,9 +6,11 @@ import { useCatalogFetch } from "../hooks/useCatalogFetch.js";
 // category/tag, min liquidity/volume, active/resolved status, and keyword;
 // save named search configs; run an ad hoc "Fetch now"; optionally schedule
 // a saved search to rerun automatically; and review an audit trail of every
-// fetch run. Saved-search/fetch-run endpoints don't exist on the frozen
-// Vercel deploy yet, so this screen degrades to "feature unavailable" there
-// instead of breaking.
+// fetch run. Saved searches work on every deploy target; the fetch-run audit
+// trail (listFetchRuns/createFetchRun/completeFetchRun) still doesn't exist
+// on the frozen Vercel deploy, so that table degrades gracefully there —
+// doFetch's own summary message (below) is what actually confirms a fetch
+// worked, independent of that audit trail.
 export default function MarketDiscovery({ tags }) {
   const [name, setName] = useState("");
   const [status, setStatus] = useState("active");
@@ -26,6 +28,7 @@ export default function MarketDiscovery({ tags }) {
   const [fetchRuns, setFetchRuns] = useState([]);
   const [activeRun, setActiveRun] = useState(null);
   const [saveError, setSaveError] = useState(null);
+  const [fetchSummary, setFetchSummary] = useState(null);
 
   const { syncStatus, run } = useCatalogFetch();
 
@@ -63,8 +66,14 @@ export default function MarketDiscovery({ tags }) {
 
   const doFetch = async (params, activeKey) => {
     setActiveRun(activeKey);
+    setFetchSummary(null);
     try {
-      await run({ limit, history: false, interval: "max", delay: 0.1, ...params });
+      const result = await run({ limit, history: false, interval: "max", delay: 0.1, ...params });
+      setFetchSummary(
+        result.total === 0
+          ? "No markets matched these filters."
+          : `Fetched ${result.total} market(s): ${result.added} added, ${result.updated} updated.`
+      );
     } catch {
       // syncStatus.error already reflects the failure.
     } finally {
@@ -252,12 +261,7 @@ export default function MarketDiscovery({ tags }) {
           >
             {syncStatus.running && activeRun === "adhoc" ? "Fetching…" : "Fetch now"}
           </button>
-          <button
-            className="btn btn-ghost"
-            disabled={syncStatus.running || savedSearchesUnavailable}
-            title={savedSearchesUnavailable ? "Saved searches aren't available on this deploy target yet." : undefined}
-            onClick={handleSave}
-          >
+          <button className="btn btn-ghost" disabled={syncStatus.running} onClick={handleSave}>
             Save search
           </button>
         </div>
@@ -274,6 +278,7 @@ export default function MarketDiscovery({ tags }) {
             </p>
           </>
         )}
+        {!syncStatus.running && fetchSummary && <p className="sync-note">{fetchSummary}</p>}
         {syncStatus.error && <p className="sync-error">{syncStatus.error}</p>}
       </div>
 
