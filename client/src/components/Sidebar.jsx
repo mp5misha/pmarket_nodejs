@@ -1,4 +1,14 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+
+const AUTO_SYNC_OPTIONS = [
+  { value: 0, label: "No automatic sync" },
+  { value: 1000, label: "Every 1 sec" },
+  { value: 5000, label: "Every 5 sec" },
+  { value: 20000, label: "Every 20 sec" },
+  { value: 60000, label: "Every 1 min" },
+  { value: 300000, label: "Every 5 min" },
+  { value: 600000, label: "Every 10 min" },
+];
 
 export default function Sidebar({
   stats,
@@ -26,10 +36,33 @@ export default function Sidebar({
   const [history, setHistory] = useState(false);
   const [interval, setInterval_] = useState("max");
   const [delay, setDelay] = useState(0.15);
+  const [autoSyncMs, setAutoSyncMs] = useState(0);
 
   const pct = syncStatus.limit
     ? Math.min(100, Math.round((syncStatus.total / syncStatus.limit) * 100))
     : 0;
+
+  // Kept fresh every render so the interval callback below always sees the
+  // latest filter values and running-state without needing to be recreated
+  // (which would otherwise reset the timer on every keystroke).
+  const syncArgsRef = useRef();
+  syncArgsRef.current = { limit, status, tag, resolutionFrom, resolutionTo, history, interval, delay };
+  const runningRef = useRef(syncStatus.running);
+  runningRef.current = syncStatus.running;
+  const onSyncRef = useRef(onSync);
+  onSyncRef.current = onSync;
+
+  useEffect(() => {
+    if (!autoSyncMs) return undefined;
+    const id = setInterval(() => {
+      // Skip this tick rather than stacking a second sync loop on top of one
+      // that's still running (a single sync can involve several sequential
+      // /api/sync/step calls and may take longer than a short interval).
+      if (runningRef.current) return;
+      onSyncRef.current(syncArgsRef.current);
+    }, autoSyncMs);
+    return () => clearInterval(id);
+  }, [autoSyncMs]);
 
   return (
     <aside className="sidebar">
@@ -147,6 +180,21 @@ export default function Sidebar({
             value={delay}
             onChange={(e) => setDelay(Number(e.target.value))}
           />
+        </div>
+
+        <div className="field">
+          <label htmlFor="auto-sync">Automatically sync markets with selected conditions</label>
+          <select
+            id="auto-sync"
+            value={autoSyncMs}
+            onChange={(e) => setAutoSyncMs(Number(e.target.value))}
+          >
+            {AUTO_SYNC_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
         </div>
 
         <button

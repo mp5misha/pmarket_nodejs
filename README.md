@@ -311,6 +311,18 @@ everything that account owns to you; it's safe to click more than once
   `settings`/`user_settings`, keyed by the filter combination — see
   `syncFilterSignature` in `lib/polymarket.js`/`server/src/polymarket.js`),
   so it persists across page reloads and (on Express) is scoped per account.
+
+  An **Automatically sync markets with selected conditions** dropdown lets
+  you have the app re-run "Run sync" on a timer instead of clicking it by
+  hand: no automatic sync (the default), or every 1 sec / 5 sec / 20 sec /
+  1 min / 5 min / 10 min. Each tick reuses whatever filters, history/interval,
+  and delay settings are currently set in the sidebar (including the resuming
+  cursor described above), so turning it on is equivalent to periodically
+  clicking Run sync yourself. A tick is skipped rather than queued if a sync
+  triggered by a previous tick (or a manual click) is still in progress, so a
+  slow sync can never stack multiple overlapping runs even at the 1-second
+  setting. This setting is local to the browser tab only — it isn't saved
+  server-side and resets to "no automatic sync" on page reload.
 - **Market grid** — search by keyword, filter by status (**All statuses** /
   **Active** / **Resolved**, applied server-side via `GET /api/markets/
   grouped`'s `status` param rather than filtering only what's already on the
