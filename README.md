@@ -532,6 +532,32 @@ how many wallets (if any) failed to load and were skipped rather than
 failing the whole request. The **Refresh** button re-fetches immediately;
 otherwise it refreshes whenever you change the time window or ranking.
 
+An **Automatically sync positions with selected conditions** dropdown (same
+options/labels/default-off behavior as the sidebar's own auto-sync
+dropdown: no automatic sync, or every 1s/5s/20s/1m/5m/10m) re-runs this
+tab's refresh on a timer instead of clicking Refresh by hand, using
+whichever time-window/ranking are currently selected. Like the sidebar's
+version, a tick is skipped (not queued) if a previous refresh is still in
+flight, and the setting is local to the tab only — it isn't saved anywhere
+and resets to off on reload.
+
+Whale positions also surface on the **All Markets** grid and a market's
+detail panel:
+
+- Any market a top-50 trader currently holds a position in gets its grid
+  row tinted **purple**, regardless of any filter — this reflects live
+  data on every grid load, not just when the checkbox below is checked.
+  It's skipped for a row that already has its own trade-price green/red
+  tint (see the previous section) since that's the more specific, personal
+  signal for that row.
+- A **Whales trades** checkbox in the All Markets filter bar limits the
+  grid to just markets currently held by a top-50 trader, applied
+  server-side (`onlyWhaleMarkets` on `GET /api/markets/grouped`) the same
+  way **My trade markets** works.
+- A market's detail panel shows a **Whale positions in this market**
+  section (trader, outcome, size, price, position value, P&L) whenever any
+  top-50 trader holds a position there — omitted entirely otherwise.
+
 Implementation notes: Polymarket's leaderboard and per-wallet positions come
 from its public "Data API" (`data-api.polymarket.com`), which — unlike the
 Gamma/CLOB APIs the rest of this app uses — has no officially published
@@ -544,7 +570,12 @@ value, and cache the aggregate for 2 minutes so opening the tab repeatedly
 doesn't re-run ~50 external requests every time. Both backends serve this at
 `/api/meta/whales` (see **Function count** above — it went straight into the
 already-merged `api/meta/[key].js` on Vercel rather than getting its own
-file, since the 12-function budget had no room left).
+file, since the 12-function budget had no room left). `getWhaleSlugSet`/
+`getWhalePositionsForSlug` (also in whales.js) wrap that same cached
+aggregate for the grid's purple highlight/filter and the detail panel's
+whale-positions section respectively — both degrade to an empty result on
+any failure rather than breaking the markets grid or a market's detail
+view over a whale-data hiccup.
 
 ## AI analysis (DeepSeek)
 

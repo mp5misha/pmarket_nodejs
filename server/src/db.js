@@ -88,8 +88,12 @@ const SORTABLE = new Set(["volume", "liquidity", "current_price", "resolution_da
 /** Shared WHERE-clause builder for queryMarkets/queryMarketsGrouped — keeps
  * the two filter sets from drifting apart. `hasTrade`'s clause references
  * @userId, which every caller already binds (for LATEST_TRADE_SELECT), so
- * it doesn't need to appear in this function's own params. */
-function buildMarketFilters({ search, status, minVolume, minPrice, maxPrice, tag, hasTrade }) {
+ * it doesn't need to appear in this function's own params. `slugs` is a
+ * generic "restrict to exactly these slugs" filter — queryMarketsGrouped
+ * uses it for the "Whales trades" grid filter, passing the currently
+ * whale-held slugs fetched from whales.js (not a DB-native concept, so it
+ * arrives here as plain data rather than a subquery like hasTrade's). */
+function buildMarketFilters({ search, status, minVolume, minPrice, maxPrice, tag, hasTrade, slugs }) {
   const clauses = [];
   const params = {};
   if (search) {
@@ -127,6 +131,19 @@ function buildMarketFilters({ search, status, minVolume, minPrice, maxPrice, tag
   }
   if (hasTrade) {
     clauses.push("EXISTS (SELECT 1 FROM trades WHERE trades.market_slug = markets.slug AND trades.user_id = @userId)");
+  }
+  if (slugs) {
+    // `slugs` provided (even empty) means "restrict to exactly these" — an
+    // empty list must produce zero matches, not silently skip the filter.
+    if (slugs.length) {
+      const names = slugs.map((_, idx) => `@slug${idx}`);
+      clauses.push(`markets.slug IN (${names.join(", ")})`);
+      slugs.forEach((s, idx) => {
+        params[`slug${idx}`] = s;
+      });
+    } else {
+      clauses.push("0 = 1");
+    }
   }
   return { clauses, params };
 }
@@ -218,12 +235,29 @@ export function queryMarketsGrouped(
     maxPrice,
     tag,
     hasTrade,
+    // Slugs any top-50 leaderboard trader currently holds (from
+    // whales.js's getWhaleSlugSet — this function has no knowledge of the
+    // external whale API itself, just plain data). Always used to annotate
+    // each row's is_whale_market for the grid's purple highlight; only used
+    // as a WHERE filter when onlyWhaleMarkets is also set (the "Whales
+    // trades" checkbox).
+    whaleSlugs,
+    onlyWhaleMarkets,
     page = 1,
     pageSize = 25,
     userId,
   } = {}
 ) {
-  const { clauses, params } = buildMarketFilters({ search, status, minVolume, minPrice, maxPrice, tag, hasTrade });
+  const { clauses, params } = buildMarketFilters({
+    search,
+    status,
+    minVolume,
+    minPrice,
+    maxPrice,
+    tag,
+    hasTrade,
+    slugs: onlyWhaleMarkets ? whaleSlugs ?? [] : undefined,
+  });
   const sortCol = SORTABLE.has(sortBy) ? sortBy : "volume";
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   const rows = db
@@ -232,6 +266,11 @@ export function queryMarketsGrouped(
        FROM markets ${where} ORDER BY ${sortCol} DESC NULLS LAST`
     )
     .all({ ...params, userId });
+
+  if (whaleSlugs) {
+    const whaleSet = new Set(whaleSlugs);
+    for (const row of rows) row.is_whale_market = whaleSet.has(row.slug) ? 1 : 0;
+  }
 
   const groupOrder = [];
   const groupsByKey = new Map();

@@ -75,7 +75,7 @@ import {
 } from "./db.js";
 import { fetchPriceHistory } from "./polymarket.js";
 import { runSyncStep, refreshMarketPrices, runFullSync } from "./sync.js";
-import { fetchWhalePositions } from "./whales.js";
+import { fetchWhalePositions, getWhaleSlugSet, getWhalePositionsForSlug } from "./whales.js";
 import {
   analyzeMarket,
   askFollowUp,
@@ -493,8 +493,13 @@ app.get("/api/markets", (req, res) => {
 // Polymarket event and paginated over groups. /api/markets stays untouched
 // (flat, ungrouped) since CSV export and the bulk price-refresh selection
 // still depend on that shape.
-app.get("/api/markets/grouped", (req, res) => {
-  const { search, status, sortBy, minVolume, minPrice, maxPrice, tag, myTrades, page, pageSize } = req.query;
+app.get("/api/markets/grouped", async (req, res) => {
+  const { search, status, sortBy, minVolume, minPrice, maxPrice, tag, myTrades, onlyWhaleMarkets, page, pageSize } =
+    req.query;
+  // Fetched (and, on the common path, served from whales.js's own 2-minute
+  // cache) on every grid load so the purple "whale-relevant" highlight
+  // always reflects current data, not just when the checkbox filter is on.
+  const whaleSlugs = await getWhaleSlugSet();
   const result = queryMarketsGrouped(getDb(DEFAULT_DB_PATH), {
     search,
     status,
@@ -504,6 +509,8 @@ app.get("/api/markets/grouped", (req, res) => {
     maxPrice: maxPrice !== undefined && maxPrice !== "" ? Number(maxPrice) : null,
     tag: tag || undefined,
     hasTrade: myTrades === "true" || myTrades === "1",
+    whaleSlugs,
+    onlyWhaleMarkets: onlyWhaleMarkets === "true" || onlyWhaleMarkets === "1",
     page: page ? Number(page) : 1,
     pageSize: pageSize ? Number(pageSize) : 25,
     userId: getOptionalUserId(req),
@@ -515,9 +522,12 @@ app.get("/api/tags", (req, res) => {
   res.json(getTags(getDb(DEFAULT_DB_PATH)));
 });
 
-app.get("/api/markets/:slug", (req, res) => {
+app.get("/api/markets/:slug", async (req, res) => {
   const row = getMarket(getDb(DEFAULT_DB_PATH), req.params.slug);
   if (!row) return res.status(404).json({ error: "Market not found" });
+  // Whale positions specifically in this market, for the detail panel's
+  // "Whale positions in this market" section — see whales.js.
+  row.whalePositions = await getWhalePositionsForSlug(req.params.slug);
   res.json(row);
 });
 

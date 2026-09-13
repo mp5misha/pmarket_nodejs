@@ -258,3 +258,40 @@ test("queryMarketsGrouped reports a resolved trade's stored profit rather than a
   assert.equal(row.my_trade_status, "won");
   assert.equal(row.my_trade_profit, 10);
 });
+
+test("queryMarketsGrouped annotates is_whale_market on every row when whaleSlugs is given, without filtering", () => {
+  upsertMarket(db, { slug: "whale-held-market", question: "WQ1", currentPrice: 0.5, noPrice: 0.5, active: true, closed: false });
+  upsertMarket(db, { slug: "whale-free-market", question: "WQ2", currentPrice: 0.5, noPrice: 0.5, active: true, closed: false });
+
+  const rows = queryMarketsGrouped(db, { whaleSlugs: ["whale-held-market", "some-other-slug"] }).groups.flatMap(
+    (g) => g.markets
+  );
+  const held = rows.find((m) => m.slug === "whale-held-market");
+  const free = rows.find((m) => m.slug === "whale-free-market");
+  assert.equal(held.is_whale_market, 1);
+  assert.equal(free.is_whale_market, 0);
+});
+
+test("queryMarketsGrouped's onlyWhaleMarkets filters to just the given slugs", () => {
+  upsertMarket(db, { slug: "whale-filter-held", question: "WF1", currentPrice: 0.5, noPrice: 0.5, active: true, closed: false });
+  upsertMarket(db, { slug: "whale-filter-free", question: "WF2", currentPrice: 0.5, noPrice: 0.5, active: true, closed: false });
+
+  const filtered = queryMarketsGrouped(db, { whaleSlugs: ["whale-filter-held"], onlyWhaleMarkets: true }).groups.flatMap(
+    (g) => g.markets
+  );
+  assert.ok(filtered.some((m) => m.slug === "whale-filter-held"));
+  assert.ok(!filtered.some((m) => m.slug === "whale-filter-free"));
+});
+
+test("queryMarketsGrouped's onlyWhaleMarkets with an empty whaleSlugs list returns zero matches, not everything", () => {
+  upsertMarket(db, { slug: "whale-empty-check", question: "WE1", currentPrice: 0.5, noPrice: 0.5, active: true, closed: false });
+  const filtered = queryMarketsGrouped(db, { whaleSlugs: [], onlyWhaleMarkets: true }).groups.flatMap((g) => g.markets);
+  assert.equal(filtered.length, 0);
+});
+
+test("queryMarketsGrouped without whaleSlugs leaves is_whale_market unset (backwards compatible)", () => {
+  upsertMarket(db, { slug: "no-whale-param-market", question: "NW1", currentPrice: 0.5, noPrice: 0.5, active: true, closed: false });
+  const rows = queryMarketsGrouped(db, {}).groups.flatMap((g) => g.markets);
+  const row = rows.find((m) => m.slug === "no-whale-param-market");
+  assert.equal(row.is_whale_market, undefined);
+});

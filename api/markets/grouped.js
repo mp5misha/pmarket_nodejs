@@ -1,4 +1,5 @@
 import { getPool, ensureSchema, queryMarketsGrouped } from "../../lib/db.js";
+import { getWhaleSlugSet } from "../../lib/whales.js";
 
 // Must exist as a static sibling file to api/markets/[slug]/ — Vercel's
 // file-based routing otherwise falls through "/api/markets/grouped" to the
@@ -8,7 +9,12 @@ export default async function handler(req, res) {
   try {
     const pool = getPool();
     await ensureSchema(pool);
-    const { search, status, sortBy, minVolume, minPrice, maxPrice, tag, myTrades, page, pageSize } = req.query;
+    const { search, status, sortBy, minVolume, minPrice, maxPrice, tag, myTrades, onlyWhaleMarkets, page, pageSize } =
+      req.query;
+    // See server/src/index.js's matching route for why this is fetched
+    // unconditionally (powers the grid's purple highlight on every load,
+    // not just when the "Whales trades" filter checkbox is on).
+    const whaleSlugs = await getWhaleSlugSet();
     const result = await queryMarketsGrouped(pool, {
       search,
       status,
@@ -18,6 +24,8 @@ export default async function handler(req, res) {
       maxPrice: maxPrice !== undefined && maxPrice !== "" ? Number(maxPrice) : null,
       tag: tag || undefined,
       hasTrade: myTrades === "true" || myTrades === "1",
+      whaleSlugs,
+      onlyWhaleMarkets: onlyWhaleMarkets === "true" || onlyWhaleMarkets === "1",
       page: page ? Number(page) : 1,
       pageSize: pageSize ? Number(pageSize) : 25,
     });

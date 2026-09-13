@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 
 const TIME_PERIODS = [
@@ -6,6 +6,18 @@ const TIME_PERIODS = [
   { value: "WEEK", label: "This week" },
   { value: "MONTH", label: "This month" },
   { value: "ALL", label: "All time" },
+];
+
+// Same option set/labels/default as Sidebar.jsx's auto-sync dropdown, just
+// for whale positions instead of the market catalog.
+const AUTO_REFRESH_OPTIONS = [
+  { value: 0, label: "No automatic sync" },
+  { value: 1000, label: "Every 1 sec" },
+  { value: 5000, label: "Every 5 sec" },
+  { value: 20000, label: "Every 20 sec" },
+  { value: 60000, label: "Every 1 min" },
+  { value: 300000, label: "Every 5 min" },
+  { value: 600000, label: "Every 10 min" },
 ];
 
 function fmtMoney(v) {
@@ -47,6 +59,7 @@ function eventUrl(base, position) {
 export default function WhaleTrades() {
   const [timePeriod, setTimePeriod] = useState("DAY");
   const [orderBy, setOrderBy] = useState("VOL");
+  const [autoRefreshMs, setAutoRefreshMs] = useState(0);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -67,6 +80,24 @@ export default function WhaleTrades() {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timePeriod, orderBy]);
+
+  // Same ref-based interval pattern as Sidebar.jsx's auto-sync: refresh()
+  // and loading are read through refs so the interval itself only needs to
+  // be recreated when autoRefreshMs changes, and a tick is skipped (not
+  // queued) while the previous refresh is still in flight.
+  const refreshRef = useRef(refresh);
+  refreshRef.current = refresh;
+  const loadingRef = useRef(loading);
+  loadingRef.current = loading;
+
+  useEffect(() => {
+    if (!autoRefreshMs) return undefined;
+    const id = setInterval(() => {
+      if (loadingRef.current) return;
+      refreshRef.current();
+    }, autoRefreshMs);
+    return () => clearInterval(id);
+  }, [autoRefreshMs]);
 
   const positions = data?.positions ?? [];
 
@@ -95,6 +126,17 @@ export default function WhaleTrades() {
           {loading ? "Refreshing…" : "Refresh"}
         </button>
       </div>
+
+      <label className="grid-inline-label whale-auto-refresh-field">
+        Automatically sync positions with selected conditions
+        <select value={autoRefreshMs} onChange={(e) => setAutoRefreshMs(Number(e.target.value))}>
+          {AUTO_REFRESH_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </label>
 
       {error && <p className="sync-error">{error}</p>}
 

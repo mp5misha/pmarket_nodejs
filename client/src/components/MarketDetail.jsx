@@ -15,6 +15,26 @@ function fmtRelatedPrice(v) {
   return v === null || v === undefined ? "—" : Number(v).toFixed(3);
 }
 
+function fmtWhaleMoney(v) {
+  if (v === null || v === undefined) return "—";
+  const n = Number(v);
+  const sign = n < 0 ? "-" : "";
+  return `${sign}$${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+}
+
+function fmtWhalePct(v) {
+  if (v === null || v === undefined) return "—";
+  return `${(Number(v) * 100).toFixed(1)}%`;
+}
+
+// Same wallet-fallback rule as WhaleTrades.jsx's traderLabel.
+function whaleTraderLabel(position) {
+  if (position.traderName) return position.traderName;
+  const w = position.traderWallet;
+  if (!w) return "Unknown trader";
+  return w.length > 10 ? `${w.slice(0, 6)}…${w.slice(-4)}` : w;
+}
+
 // Walks an analysis's parent_analysis_id chain from root to `id`, using the
 // already-fetched flat list for this market (every ancestor of a follow-up
 // is always on the same market, so no extra request is needed).
@@ -468,6 +488,38 @@ export default function MarketDetail({ market, onOpenSettings, onSelectRelated }
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {market.whalePositions && market.whalePositions.length > 0 && (
+        <div className="related-markets whale-positions-section">
+          <h4>Whale positions in this market</h4>
+          <table className="discovery-table">
+            <thead>
+              <tr>
+                <th>Trader</th>
+                <th>Outcome</th>
+                <th>Size</th>
+                <th>Price</th>
+                <th>Position value</th>
+                <th>P&amp;L</th>
+              </tr>
+            </thead>
+            <tbody>
+              {market.whalePositions.map((p, i) => (
+                <tr key={`${p.traderWallet}-${i}`}>
+                  <td title={p.traderWallet || ""}>{whaleTraderLabel(p)}</td>
+                  <td>{p.outcome || "—"}</td>
+                  <td className="num">{p.size != null ? Number(p.size).toLocaleString() : "—"}</td>
+                  <td className="num">{fmtRelatedPrice(p.curPrice)}</td>
+                  <td className="num">{fmtWhaleMoney(p.currentValue)}</td>
+                  <td className={p.cashPnl > 0 ? "trades-profit-positive" : p.cashPnl < 0 ? "trades-profit-negative" : ""}>
+                    {fmtWhaleMoney(p.cashPnl)} {p.percentPnl != null && <>({fmtWhalePct(p.percentPnl)})</>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 

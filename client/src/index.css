@@ -7,6 +7,7 @@
   --up: #3c7a5e;
   --down: #9c4a3a;
   --accent: #b8862e;
+  --whale: #7d5ba6;
   --sidebar-bg: #171d26;
   --sidebar-text: #e7e5dd;
   --sidebar-muted: #8b93a0;
@@ -516,6 +517,18 @@ table.ledger tbody tr.trade-row-down {
 
 table.ledger tbody tr.trade-row-down:hover {
   background: rgba(156, 74, 58, 0.18);
+}
+
+/* A top-50 leaderboard trader currently holds a position in this market
+ * (see is_whale_market from queryMarketsGrouped) — only applied when the
+ * row has no trade-price highlight of its own (see MarketRow's precedence
+ * comment), so it never fights with the more specific green/red tint. */
+table.ledger tbody tr.whale-row {
+  background: rgba(125, 91, 166, 0.12);
+}
+
+table.ledger tbody tr.whale-row:hover {
+  background: rgba(125, 91, 166, 0.19);
 }
 
 .my-trade-cell {
@@ -1179,6 +1192,20 @@ table.ledger tbody tr.trade-row-down:hover {
 
 .discovery-table a:hover {
   text-decoration: underline;
+}
+
+.whale-auto-refresh-field {
+  margin: 0 0 14px;
+}
+
+.whale-auto-refresh-field select {
+  border: 1px solid var(--rule);
+  background: var(--panel);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12.5px;
+  font-family: var(--font-sans);
+  color: var(--ink);
 }
 
 .discovery-row-actions {

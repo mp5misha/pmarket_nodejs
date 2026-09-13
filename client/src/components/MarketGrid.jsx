@@ -125,10 +125,13 @@ function SelectAllCheckbox({ checked, indeterminate, onChange }) {
 function MarketRow({ market, isNested, selectedSlug, onSelectMarket, selectedSlugs, onToggleSelect, highlightThreshold }) {
   const impliedYes = market.current_price;
   const hasTrade = market.my_trade_id != null;
-  // A trade's own price comparison takes priority over the generic
-  // implied-probability highlight when both would apply to the same row —
-  // it's the more specific, personally-relevant signal.
-  const highlighted = !hasTrade && highlightThreshold != null && impliedYes != null && impliedYes >= highlightThreshold;
+  const isWhaleMarket = Boolean(market.is_whale_market);
+  // Precedence when more than one highlight would apply to the same row,
+  // most specific/personal first: your own trade's price comparison, then
+  // "a whale currently holds this" (purple), then the generic
+  // implied-probability threshold.
+  const highlighted =
+    !hasTrade && !isWhaleMarket && highlightThreshold != null && impliedYes != null && impliedYes >= highlightThreshold;
   let tradeRowClass = "";
   if (hasTrade) {
     const entryPrice = Number(market.my_trade_entry_price);
@@ -142,6 +145,7 @@ function MarketRow({ market, isNested, selectedSlug, onSelectMarket, selectedSlu
     market.slug === selectedSlug ? "selected" : "",
     isNested ? "nested-row" : "",
     highlighted ? "highlighted-row" : "",
+    !hasTrade && isWhaleMarket ? "whale-row" : "",
     tradeRowClass,
   ]
     .filter(Boolean)
