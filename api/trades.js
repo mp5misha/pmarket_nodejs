@@ -140,7 +140,15 @@ async function handleResolve(req, res, pool) {
     return res.status(200).json({ trade, resolved: false, message: "This trade is already resolved." });
   }
   try {
-    const raw = await fetchMarketBySlug(trade.market_slug);
+    // retries: 1 — a single attempt, no backoff. This is a user-initiated
+    // button click, not the unattended bulk sweep (handleCheckResolutions
+    // above), so it shouldn't make someone watch a spinner through 3
+    // retries' worth of exponential backoff (worst case ~14s) — which,
+    // on the Hobby plan's serverless function budget, risks the whole
+    // request getting killed before it ever responds. Falling back to the
+    // already-stored price on any failure still leaves the bulk sweep and
+    // "Refresh outcomes" to catch it on the next pass.
+    const raw = await fetchMarketBySlug(trade.market_slug, { retries: 1 });
     if (raw) await upsertMarket(pool, normalizeMarket(raw));
   } catch {
     // Best-effort refresh — fall back to whatever price is already stored.

@@ -114,10 +114,15 @@ export async function runFullSync({ dbPath, userId, limit = 2000, ...filters }) 
 }
 
 // Re-fetches current price/volume/liquidity for a specific list of slugs —
-// used by the "update selected markets" bulk action in the table, as
-// opposed to runSyncStep's full paginated catalog sync. Existing min/max
-// price and CLOB token id are preserved (upsertMarket's COALESCE behavior).
-export async function refreshMarketPrices({ dbPath, slugs }) {
+// used by the "update selected markets" bulk action in the table and the
+// resolution-checkers (bulk and single-trade), as opposed to runSyncStep's
+// full paginated catalog sync. Existing min/max price and CLOB token id are
+// preserved (upsertMarket's COALESCE behavior). `retries` (see
+// polymarket.js's getJson) defaults to the patient multi-retry behavior
+// appropriate for an unattended sweep; the single-trade "Resolve" button
+// passes `retries: 1` so a stuck/erroring Polymarket call fails fast
+// instead of leaving a button spinning through several retries' backoff.
+export async function refreshMarketPrices({ dbPath, slugs, retries } = {}) {
   const db = getDb(dbPath);
   const queue = [...new Set(slugs)].filter(Boolean);
   const updated = [];
@@ -128,7 +133,7 @@ export async function refreshMarketPrices({ dbPath, slugs }) {
       const slug = queue.shift();
       if (!slug) return;
       try {
-        const raw = await fetchMarketBySlug(slug);
+        const raw = await fetchMarketBySlug(slug, { retries });
         if (!raw) {
           failed.push({ slug, error: "Not found on Polymarket" });
           continue;

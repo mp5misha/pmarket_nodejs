@@ -459,6 +459,21 @@ query-param route on the same flat file/route as `?action=check-resolutions`
 (see **Function count** below), rather than a dynamic `/api/trades/:id/
 resolve` path.
 
+Its Polymarket price refresh (`fetchMarketBySlug`, `server/src/polymarket.js`
+/ `lib/polymarket.js`) passes `{ retries: 1 }` — a single attempt, no
+backoff — rather than `getJson`'s default 3-retry exponential backoff (worst
+case ~14s, the same call the *bulk* sweep uses, which can afford to be
+patient since nothing's waiting on it). A single button click shouldn't
+force someone to watch a spinner for that long, and on Vercel's Hobby plan
+a call that slow risks outliving the serverless function's own execution
+budget outright — which is exactly what made this button appear to hang or
+silently fail before this fix. A failed refresh — fast now, still
+best-effort — simply falls back to whatever price is already stored, same
+as always; `getJson` also had a latent bug fixed alongside this (its abort
+timer was only ever cleared on a successful fetch, leaking a 20-second
+timer on every failed attempt) that made this very visible in the test
+suite once a retry path was actually exercised there.
+
 ### Suggested stake (Express/SQLite only)
 
 Inside **Mark as traded**, a **Suggested stake** calculator offers three

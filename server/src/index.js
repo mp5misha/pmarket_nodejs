@@ -1441,7 +1441,15 @@ async function resolveSingleTrade(db, userId, trade) {
     return { trade, resolved: false, message: "This trade is already resolved." };
   }
   try {
-    await refreshMarketPrices({ dbPath: DEFAULT_DB_PATH, slugs: [trade.market_slug] });
+    // retries: 1 — a single attempt, no backoff. This is a user-initiated
+    // button click, not the unattended bulk sweep (checkTradeResolutions),
+    // so it shouldn't make someone watch a spinner through 3 retries' worth
+    // of exponential backoff (worst case ~14s) — or worse, risk the request
+    // outliving a serverless function's execution budget entirely. Falling
+    // back to the already-stored price on any failure (including this
+    // deliberately-thin retry budget) still leaves the bulk sweep and
+    // "Refresh outcomes" to catch it on the next pass.
+    await refreshMarketPrices({ dbPath: DEFAULT_DB_PATH, slugs: [trade.market_slug], retries: 1 });
   } catch {
     // Best-effort refresh — fall back to whatever price is already stored.
   }
