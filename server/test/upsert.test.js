@@ -461,9 +461,17 @@ test("updateAnalysisFairProb is scoped to user_id — cannot overwrite another u
   assert.equal(getAnalysis(db, owner.id, analysis.id).fair_prob_yes, null);
 });
 
-test("listTrades includes the market's live current/no price via a LEFT JOIN, surviving a deleted market", () => {
+test("listTrades includes the market's live current/no price and resolution date via a LEFT JOIN, surviving a deleted market", () => {
   const owner = createUser(db, { email: "listtrades-price-owner@example.com", passwordHash: "x" });
-  upsertMarket(db, { slug: "listtrades-price-market", question: "L1", currentPrice: 0.65, noPrice: 0.35, active: true, closed: false });
+  upsertMarket(db, {
+    slug: "listtrades-price-market",
+    question: "L1",
+    currentPrice: 0.65,
+    noPrice: 0.35,
+    active: true,
+    closed: false,
+    resolutionDate: "2026-12-31T00:00:00.000Z",
+  });
   createTrade(db, owner.id, {
     marketSlug: "listtrades-price-market",
     side: "yes",
@@ -485,8 +493,10 @@ test("listTrades includes the market's live current/no price via a LEFT JOIN, su
 
   assert.equal(withMarket.market_current_price, 0.65);
   assert.equal(withMarket.market_no_price, 0.35);
+  assert.equal(withMarket.market_resolution_date, "2026-12-31T00:00:00.000Z");
   // A trade whose market isn't in the local catalog (e.g. deleted) must
-  // still be returned — just with null prices, not dropped by the join.
+  // still be returned — just with null prices/date, not dropped by the join.
   assert.ok(withoutMarket);
   assert.equal(withoutMarket.market_current_price, null);
+  assert.equal(withoutMarket.market_resolution_date, null);
 });

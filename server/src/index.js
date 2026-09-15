@@ -930,9 +930,10 @@ app.post("/api/settings/bet-sizing", requireAuth, (req, res) => {
 // and /api/trades/export routes below) because the Vercel deploy's mirror
 // of this endpoint (api/trades.js) is a single flat file with no dynamic
 // path segment to capture a literal sub-path — see README's "Function
-// count" section. Same reasoning for ?action=check-resolutions on POST
-// /api/trades below, and the query-param DELETE /api/trades route further
-// down (alongside the existing DELETE /api/trades/:id).
+// count" section. Same reasoning for ?action=check-resolutions and
+// ?action=resolve&id= (the My Trades grid's per-row "Resolve" button) on
+// POST /api/trades below, and the query-param DELETE /api/trades route
+// further down (alongside the existing DELETE /api/trades/:id).
 app.get("/api/trades", requireAuth, (req, res) => {
   if (req.query.action === "analytics") {
     return res.json(getProfitabilityAnalytics(getDb(DEFAULT_DB_PATH), req.userId));
@@ -969,6 +970,17 @@ app.post("/api/trades", requireAuth, async (req, res) => {
   if (req.query.action === "check-resolutions") {
     try {
       const result = await checkTradeResolutions();
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(500).json({ error: String(err.message ?? err) });
+    }
+  }
+  if (req.query.action === "resolve") {
+    const db = getDb(DEFAULT_DB_PATH);
+    const trade = getTrade(db, req.userId, req.query.id);
+    if (!trade) return res.status(404).json({ error: "Trade not found" });
+    try {
+      const result = await resolveSingleTrade(db, req.userId, trade);
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: String(err.message ?? err) });
@@ -1415,6 +1427,48 @@ async function checkTradeResolutions() {
     }
   }
   return { checked: slugs.length, resolved };
+}
+
+// Single-trade version of checkTradeResolutions() above, for the My Trades
+// grid's per-row "Resolve" button: refreshes just that one trade's market
+// price, then resolves the trade if (and only if) the market has cleanly
+// settled — otherwise reports why not, rather than silently no-opping, so
+// the button can tell the user "not closed yet" apart from an actual error.
+// `trade` must already be ownership-checked by the caller (getTrade scoped
+// to req.userId), same precondition resolveTrade's own doc comment notes.
+async function resolveSingleTrade(db, userId, trade) {
+  if (trade.status !== "open") {
+    return { trade, resolved: false, message: "This trade is already resolved." };
+  }
+  try {
+    await refreshMarketPrices({ dbPath: DEFAULT_DB_PATH, slugs: [trade.market_slug] });
+  } catch {
+    // Best-effort refresh — fall back to whatever price is already stored.
+  }
+  const market = getMarket(db, trade.market_slug);
+  if (!market || !market.closed || market.current_price == null) {
+    return { trade, resolved: false, message: "This market hasn't closed yet." };
+  }
+  const winningSide = winningSideFromPrice(market.current_price);
+  if (!winningSide) {
+    return { trade, resolved: false, message: "This market is closed but hasn't cleanly settled to 0 or 1 yet." };
+  }
+  const { status: outcome, payout, profit } = resolveTradeOutcome({
+    side: trade.side,
+    entryPrice: trade.entry_price,
+    stake: trade.stake,
+    winningSide,
+  });
+  const updated = resolveTrade(db, trade.id, { status: outcome, payout, profit });
+  if (outcome === "won" && hasDebitForTrade(db, trade.id)) {
+    createLedgerEntry(db, userId, {
+      entryType: "credit",
+      amount: payout,
+      tradeId: trade.id,
+      note: `Trade won: ${trade.market_slug}`,
+    });
+  }
+  return { trade: updated, resolved: true };
 }
 
 setInterval(() => {

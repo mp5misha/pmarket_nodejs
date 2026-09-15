@@ -434,11 +434,30 @@ entryPrice`, `Position value = shares × currentPrice`, `P&L = Position value
 − stake`. For a **resolved** trade (won/lost) these two columns simply
 mirror the already-final Payout/Profit — there's nothing further to mark to
 market once a trade is settled. `GET /api/trades` LEFT JOINs each trade to
-its market for `current_price`/`no_price` (a LEFT, not INNER, join — a trade
-survives with a blank current price rather than disappearing if its market
-was ever removed from the local catalog). A **P&L by trade** bar chart above
-the table visualizes the same live/final P&L for every trade in the current
-status tab, colored green/red per bar.
+its market for `current_price`/`no_price`/`resolution_date` (a LEFT, not
+INNER, join — a trade survives with blank market fields rather than
+disappearing if its market was ever removed from the local catalog). A
+**Market end** column shows that same joined `resolution_date` — when the
+market itself is scheduled to resolve, not to be confused with **Placed**
+(when the trade was recorded). A **P&L by trade** bar chart above the table
+visualizes the same live/final P&L for every trade in the current status
+tab, colored green/red per bar, and a **Total** row below the table sums
+**Position value** and **P&L** across every trade currently listed (i.e.
+respecting the All/Open/Won/Lost tab).
+
+Each open trade's row also gets its own **Resolve** button — the same
+resolution check **Refresh outcomes** runs in bulk, scoped to just that one
+trade: refresh its market's price, and if the market has closed and cleanly
+settled to (near) 0 or 1, mark the trade Won or Lost immediately, without
+waiting for the next bulk sweep. If the market isn't there yet, it says so
+in a plain note instead of erroring — "This market hasn't closed yet." or
+"…closed but hasn't cleanly settled to 0 or 1 yet." — so a click on a
+market that's simply still trading doesn't look like a failure. Won on
+Express/SQLite credits the ledger the same way a bulk resolution does. Both
+backends answer this at `POST /api/trades?action=resolve&id=<id>` — a
+query-param route on the same flat file/route as `?action=check-resolutions`
+(see **Function count** below), rather than a dynamic `/api/trades/:id/
+resolve` path.
 
 ### Suggested stake (Express/SQLite only)
 

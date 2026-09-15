@@ -238,6 +238,13 @@ export const api = {
       if (!res.ok) throw new Error(`Request failed (${res.status})`);
     }),
   checkTradeResolutions: () => req(`${BASE}/trades?action=check-resolutions`, { method: "POST" }).then(handle),
+  // Single-trade version of the above — the My Trades grid's per-row
+  // "Resolve" button. Returns { trade, resolved, message? }: resolved is
+  // false (with a message explaining why — already resolved, market still
+  // open, or closed but not yet cleanly settled) rather than an error, so
+  // the UI can show a plain note instead of a failure banner in that case.
+  resolveTrade: (id) =>
+    req(`${BASE}/trades?action=resolve&id=${encodeURIComponent(id)}`, { method: "POST" }).then(handle),
   // Profitability tracking (Phase 9) — aggregate metrics + chart data over
   // every resolved trade.
   getTradeAnalytics: () => req(`${BASE}/trades?action=analytics`).then(handle),

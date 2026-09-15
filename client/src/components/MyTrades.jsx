@@ -82,6 +82,7 @@ export default function MyTrades() {
   const [error, setError] = useState(null);
   const [checking, setChecking] = useState(false);
   const [checkNote, setCheckNote] = useState(null);
+  const [resolvingId, setResolvingId] = useState(null);
 
   const [analytics, setAnalytics] = useState(null);
   const [dashboard, setDashboard] = useState(null);
@@ -178,6 +179,34 @@ export default function MyTrades() {
     }
   };
 
+  // Per-row "Resolve" — checks just this one trade's market instead of the
+  // "Refresh outcomes" button's sweep over every open trade. resolveTrade()
+  // never throws for "not resolvable yet"; it returns resolved: false with
+  // a message instead, so a market that's simply still open shows a plain
+  // note rather than looking like a failure.
+  const resolveOne = async (id) => {
+    setResolvingId(id);
+    setCheckNote(null);
+    try {
+      const { trade, resolved, message } = await api.resolveTrade(id);
+      // resolveTrade's response is a bare trades-table row — no
+      // market_current_price/market_no_price/market_resolution_date, since
+      // it isn't joined the way listTrades is. Merge onto the existing row
+      // for instant feedback rather than dropping those fields; the
+      // refresh() below (only on an actual resolution) then re-fetches the
+      // full joined row anyway.
+      setTrades((prev) => prev.map((t) => (t.id === trade.id ? { ...t, ...trade } : t)));
+      setCheckNote(resolved ? `Trade #${id} resolved as ${trade.status}.` : message);
+      if (resolved) {
+        await Promise.all([refresh(), refreshDashboard(), refreshLedger(), refreshAnalytics()]);
+      }
+    } catch (err) {
+      setCheckNote(err.message);
+    } finally {
+      setResolvingId(null);
+    }
+  };
+
   const addLedgerEntry = async () => {
     const amount = Number(ledgerAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -199,6 +228,20 @@ export default function MyTrades() {
   };
 
   const currency = dashboard?.currency || "USD";
+
+  // Totals for the summary row below the table — over the currently listed
+  // (status-tab-filtered) trades, using the same live/final positionValue/
+  // livePnl as each row and the chart above; a trade missing a current
+  // price (e.g. its market was deleted) simply doesn't contribute rather
+  // than treating the missing figure as zero.
+  const totalPositionValue = trades.reduce((sum, t) => {
+    const v = positionValue(t);
+    return v == null ? sum : sum + v;
+  }, 0);
+  const totalPnl = trades.reduce((sum, t) => {
+    const v = livePnl(t);
+    return v == null ? sum : sum + v;
+  }, 0);
 
   return (
     <div className="my-trades">
@@ -448,6 +491,7 @@ export default function MyTrades() {
               <th>Position value</th>
               <th>P&amp;L</th>
               <th>Status</th>
+              <th>Market end</th>
               <th>Payout</th>
               <th>Profit</th>
               <th>Placed</th>
@@ -472,6 +516,7 @@ export default function MyTrades() {
                     {pnl != null ? fmtSignedMoney(pnl, currency) : "—"}
                   </td>
                   <td>{t.status}</td>
+                  <td>{t.market_resolution_date ? new Date(t.market_resolution_date).toLocaleDateString() : "—"}</td>
                   <td>{fmtMoney(t.payout, currency)}</td>
                   <td className={t.profit > 0 ? "trades-profit-positive" : t.profit < 0 ? "trades-profit-negative" : ""}>
                     {t.profit != null ? fmtMoney(t.profit, currency) : "—"}
@@ -480,7 +525,17 @@ export default function MyTrades() {
                   <td className="discovery-filters-cell" title={t.note || ""}>
                     {t.note || "—"}
                   </td>
-                  <td>
+                  <td className="trades-actions-cell">
+                    {t.status === "open" && (
+                      <button
+                        className="btn btn-small btn-ghost"
+                        onClick={() => resolveOne(t.id)}
+                        disabled={resolvingId === t.id}
+                        title="Checks whether this trade's market has settled, and marks it Won/Lost if so"
+                      >
+                        {resolvingId === t.id ? "Resolving…" : "Resolve"}
+                      </button>
+                    )}
                     <button className="btn btn-small btn-ghost" onClick={() => removeTrade(t.id)}>
                       Delete
                     </button>
@@ -489,6 +544,20 @@ export default function MyTrades() {
               );
             })}
           </tbody>
+          <tfoot>
+            <tr className="trades-totals-row">
+              <td colSpan={5}>
+                <strong>Total ({trades.length} trade{trades.length === 1 ? "" : "s"})</strong>
+              </td>
+              <td>
+                <strong>{fmtMoney(totalPositionValue, currency)}</strong>
+              </td>
+              <td className={totalPnl > 0 ? "trades-profit-positive" : totalPnl < 0 ? "trades-profit-negative" : ""}>
+                <strong>{fmtSignedMoney(totalPnl, currency)}</strong>
+              </td>
+              <td colSpan={7} />
+            </tr>
+          </tfoot>
           </table>
         </>
       )}

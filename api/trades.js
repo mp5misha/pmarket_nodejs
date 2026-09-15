@@ -124,6 +124,47 @@ async function handleCheckResolutions(req, res, pool) {
   res.status(200).json({ checked: slugs.length, resolved });
 }
 
+// Single-trade version of handleCheckResolutions above, for the My Trades
+// grid's per-row "Resolve" button — refreshes just that one trade's market
+// price, then resolves the trade if (and only if) the market has cleanly
+// settled, reporting why not otherwise rather than silently no-opping.
+// Mirrors server/src/index.js's resolveSingleTrade; no ledger crediting
+// here, matching this file's own "no bankroll ledger on this deploy
+// target" note above.
+async function handleResolve(req, res, pool) {
+  const id = req.query.id;
+  if (!id) return res.status(400).json({ error: "id is required" });
+  const trade = await getTrade(pool, id);
+  if (!trade) return res.status(404).json({ error: "Trade not found" });
+  if (trade.status !== "open") {
+    return res.status(200).json({ trade, resolved: false, message: "This trade is already resolved." });
+  }
+  try {
+    const raw = await fetchMarketBySlug(trade.market_slug);
+    if (raw) await upsertMarket(pool, normalizeMarket(raw));
+  } catch {
+    // Best-effort refresh — fall back to whatever price is already stored.
+  }
+  const market = await getMarket(pool, trade.market_slug);
+  if (!market || !market.closed || market.current_price == null) {
+    return res.status(200).json({ trade, resolved: false, message: "This market hasn't closed yet." });
+  }
+  const winningSide = winningSideFromPrice(market.current_price);
+  if (!winningSide) {
+    return res
+      .status(200)
+      .json({ trade, resolved: false, message: "This market is closed but hasn't cleanly settled to 0 or 1 yet." });
+  }
+  const { status, payout, profit } = resolveTradeOutcome({
+    side: trade.side,
+    entryPrice: Number(trade.entry_price),
+    stake: Number(trade.stake),
+    winningSide,
+  });
+  const updated = await resolveTrade(pool, trade.id, { status, payout, profit });
+  res.status(200).json({ trade: updated, resolved: true });
+}
+
 async function handleDelete(req, res, pool) {
   const id = req.query.id;
   if (!id) return res.status(400).json({ error: "id is required" });
@@ -145,6 +186,7 @@ export default async function handler(req, res) {
     }
     if (req.method === "POST") {
       if (req.query.action === "check-resolutions") return await handleCheckResolutions(req, res, pool);
+      if (req.query.action === "resolve") return await handleResolve(req, res, pool);
       return await handleCreate(req, res, pool);
     }
     if (req.method === "DELETE") return await handleDelete(req, res, pool);

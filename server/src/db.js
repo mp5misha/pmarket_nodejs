@@ -851,11 +851,12 @@ export function getTrade(db, userId, id) {
 
 /** `userId` is optional — omit it only for internal system use (the
  * resolution-checker scheduler), never from an HTTP route. */
-// The market_current_price/market_no_price columns (via a LEFT JOIN — a
-// trade must survive even if its market was since deleted from the local
-// catalog) power the My Trades grid's live "Current price"/"Position
-// value"/"P&L" columns, mirroring how the All Markets grid marks an open
-// trade to market (see MarketGrid.jsx's priceForSide/tradeProfit).
+// The market_current_price/market_no_price/market_resolution_date columns
+// (via a LEFT JOIN — a trade must survive even if its market was since
+// deleted from the local catalog) power the My Trades grid's live "Current
+// price"/"Position value"/"P&L"/"Market end" columns, mirroring how the All
+// Markets grid marks an open trade to market (see MarketGrid.jsx's
+// priceForSide/tradeProfit).
 export function listTrades(db, { status, marketSlug, userId } = {}) {
   const clauses = [];
   const params = [];
@@ -874,7 +875,8 @@ export function listTrades(db, { status, marketSlug, userId } = {}) {
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
   return db
     .prepare(
-      `SELECT trades.*, markets.current_price AS market_current_price, markets.no_price AS market_no_price
+      `SELECT trades.*, markets.current_price AS market_current_price, markets.no_price AS market_no_price,
+              markets.resolution_date AS market_resolution_date
        FROM trades LEFT JOIN markets ON markets.slug = trades.market_slug
        ${where} ORDER BY trades.placed_at DESC`
     )

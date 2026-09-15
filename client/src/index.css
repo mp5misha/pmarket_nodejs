@@ -1194,6 +1194,17 @@ table.ledger tbody tr.whale-row:hover {
   text-decoration: underline;
 }
 
+.trades-totals-row td {
+  border-bottom: none;
+  border-top: 2px solid var(--rule);
+  background: var(--paper);
+}
+
+.trades-actions-cell {
+  display: flex;
+  gap: 6px;
+}
+
 .whale-auto-refresh-field {
   margin: 0 0 14px;
 }
